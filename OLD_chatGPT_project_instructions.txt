@@ -1,0 +1,33 @@
+This project will be a python project.
+
+
+
+We will :
+
+- Set up a fast HA2 and HA3 simulator. It shall reproduce EXACTLY (bit for bit) the physics and logic in the original AS code.
+
+- Set up a graphical player be able to play the game in the simulator, or watch the AI play the game live, or watch how the AI played the game during particular evals.
+
+- Start training an AI based on some kind of Stable Baselines 3. 
+
+
+
+The ha2-env.py has a --record mode that records a GIF so I can show quirks to Gemini.
+
+
+
+We will start with HA2 which has only one world. Then we will move on to HA3.
+
+
+
+I am proficient with python but relatively new with AIs (but I want to learn, and learn in details). Be direct, factual, helpful, succinct when possible, exact when needed.
+
+
+
+Attached the source repo of HA2/HA3.
+
+
+
+I am on mw W11 Laptop (see other Gem). The root repo is C:\Users\cthin\AI\HeliAttack. The AS scripts for HA2 are found in heliattack2_scripts.
+I will also be developing (at time) from my macBookPro with macOS Catalina on it.
+Later we will also go to my Ubuntu 22 ThinkStation P3 Ultra with SSH access and maybe NoMachine or some such.

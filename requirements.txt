@@ -1,0 +1,10 @@
+gymnasium>=0.29
+numpy>=1.26
+pygame>=2.5
+imageio>=2.34
+pytest>=8.0
+stable-baselines3>=2.3
+tensorboard>=2.16
+
+# Optional, install separately only when using --wandb on:
+# wandb>=0.16

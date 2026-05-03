@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+runs/
+models/checkpoints/
+models/*.zip
+replays/
+recordings/
+screenshots/
+wandb/
+*.gif
+*.mp4
