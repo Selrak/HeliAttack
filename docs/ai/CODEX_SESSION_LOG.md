@@ -130,3 +130,23 @@ Have ChatGPT webchat produce a concrete implementation phase and paste it into `
 - Result: startup profile to first render improved from about 9.29s to about 0.78s locally.
 - Passed: `py_compile`, `pytest -q`, replay record/verify.
 - Not run: manual GUI gameplay.
+
+## 2026-05-04 10:57 Europe/Paris - Scripted Player Traces
+
+- Task: add first HA2 player-parity validation layer; no combat/weapons.
+- Changed: `.gitignore`, `scripts/record_scripted_trace.py`, `tests/test_scripted_trace.py`, `docs/parity_notes.md`, and handoff docs.
+- Added deterministic traces for idle, walk right, jump hold, double jump, duck/stand, and hyperjump under `reports/parity_traces/`.
+- Passed: `py_compile`, `pytest -q`, random replay record/verify, scripted trace generation, scripted `walk_right_120` verify.
+- Not run: manual GUI play/replay checks.
+
+## 2026-05-04 13:52 Europe/Paris - AS Player/Camera Parity Audit
+
+- Task: audit Python player/camera/rendering behavior against HA2 AS; no combat/training scope.
+- Inspected: `ha2_env.py`, replay/trace scripts, docs, and `frame_19_DoAction_2.as` blocks `drawMap`, `assignents`, `getWorldPos`, `scrollMap`, `heroSetup`, `heroStart`, `heroAction`, `hitCheck`, `startGame`, and main scroll/parallax update.
+- Changed: `docs/parity_notes.md`, `docs/ai/CURRENT_STATE.md`, `docs/ai/CODEX_SESSION_LOG.md`, `docs/ai/VALIDATION.md`, `docs/ai/PROJECT_CONTEXT.md`.
+- Python behavior changed: no.
+- Validation passed: `py_compile`; `pytest -q`; random replay record/verify; scripted trace generation; scripted `walk_right_120` verify.
+- Bugs/blockers: none.
+- Discrepancy found: Python camera/parallax is stateless/centered, unlike AS threshold-driven `world._x/_y` plus `bglayer1` parallax.
+- Remaining risks: AS casing quirk, player registration/nested walk cadence, edge `hitCheck` behavior, and camera parity need Flash/bytecode or focused implementation.
+- Next: decide whether to implement AS-style stateful camera/parallax or proceed to basic gun task.

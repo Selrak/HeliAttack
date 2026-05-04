@@ -3,9 +3,12 @@
 Run from repo root after installing `requirements.txt`:
 
 ```powershell
+python -m py_compile ha2_env.py ha2_replay.py extract_ha2_data.py ha2_constants.py
 python -m pytest
 python -m scripts.record_random_replay --steps 300 --out replays/smoke.jsonl
 python -m scripts.verify_replay replays/smoke.jsonl
+python -m scripts.record_scripted_trace --scenario all
+python -m scripts.verify_replay reports/parity_traces/walk_right_120.jsonl
 ```
 
 Manual GUI checks:
@@ -13,6 +16,7 @@ Manual GUI checks:
 ```powershell
 python -m scripts.play_human
 python -m scripts.play_replay replays/smoke.jsonl
+python -m scripts.play_replay reports/parity_traces/walk_right_120.jsonl
 ```
 
 Optional SB3 smoke after installing training dependencies:

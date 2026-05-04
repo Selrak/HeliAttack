@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-04 10:30 Europe/Paris
+Last updated: 2026-05-04 13:52 Europe/Paris
 
 ## What Appears to Work
 - Python 3.11.9 is available locally; `.venv` has pytest and SB3 installed.
@@ -10,11 +10,14 @@ Last updated: 2026-05-04 10:30 Europe/Paris
 - JSONL replay record/verify works for `replays/smoke.jsonl`.
 - Playable GUI, replay GUI, screenshot hotkey, FFDEC tile/player rendering, and SB3 train/evaluate/watch entry points now exist.
 - `play_human` startup was reduced by avoiding broad `pygame.init()`; local profile reached first render in about 0.78s.
+- Scripted movement trace generation exists for idle, walk right, jump hold, double jump, duck/stand, and hyperjump.
+- Charles manually exercised GUI play/replay checks after the scripted trace phase and reported they looked OK.
 
 ## What Is Unknown
 - SB3 training/evaluation was not rerun after the FFDEC render change.
-- GUI play/replay and GIF recording were not manually exercised.
+- Scripted traces are Python simulator traces only; they have not been compared against Flash yet.
 - AS bit-for-bit parity is a goal, but no parity test harness was found.
+- GIF recording still needs manual validation.
 
 ## Current Architecture
 - `ha2_env.py` contains the main runtime architecture: environment state, player physics, collision checks against `const.FULL_MAP_DATA`, rendering, and state/hash debug hooks.
@@ -32,10 +35,9 @@ Last updated: 2026-05-04 10:30 Europe/Paris
 - No HA3 implementation was found during bootstrap inspection.
 
 ## Current Risks and Unclear Points
-- Player bitmap registration and walk animation cadence remain approximate; see `docs/parity_notes.md`.
+- Camera/parallax are a known approximation versus AS stateful `world._x/_y` threshold scrolling.
+- Player bitmap registration, nested walk cadence, AS casing quirks, and edge `hitCheck` behavior remain uncertain; see `docs/parity_notes.md`.
 - The generated constants file is large and should not be edited manually without a clear reason.
-- AS variable casing quirks need verification before physics changes.
-- GUI scripts need manual Windows validation.
 - Existing worktree has many modified/untracked files; future Codex sessions must avoid reverting user work.
 
 ## Manual Control Update

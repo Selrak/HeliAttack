@@ -9,6 +9,7 @@ models/*.zip
 replays/
 recordings/
 screenshots/
+reports/parity_traces/
 wandb/
 *.gif
 *.mp4
