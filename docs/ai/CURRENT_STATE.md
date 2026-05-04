@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-04 00:44 Europe/Paris
+Last updated: 2026-05-04 10:30 Europe/Paris
 
 ## What Appears to Work
 - Python 3.11.9 is available locally; `.venv` has pytest and SB3 installed.
@@ -9,6 +9,7 @@ Last updated: 2026-05-04 00:44 Europe/Paris
 - `rgb_array` render smoke works with shape `(320, 450, 3)`.
 - JSONL replay record/verify works for `replays/smoke.jsonl`.
 - Playable GUI, replay GUI, screenshot hotkey, FFDEC tile/player rendering, and SB3 train/evaluate/watch entry points now exist.
+- `play_human` startup was reduced by avoiding broad `pygame.init()`; local profile reached first render in about 0.78s.
 
 ## What Is Unknown
 - SB3 training/evaluation was not rerun after the FFDEC render change.

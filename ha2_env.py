@@ -120,8 +120,6 @@ class HeliAttack2Env(gym.Env):
         if self.render_mode == "rgb_array":
             os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
-        if not pygame.get_init():
-            pygame.init()
         if not pygame.display.get_init():
             pygame.display.init()
 
@@ -134,7 +132,8 @@ class HeliAttack2Env(gym.Env):
             pygame.display.set_mode((1, 1), getattr(pygame, "HIDDEN", 0))
 
         if self.font is None:
-            pygame.font.init()
+            if not pygame.font.get_init():
+                pygame.font.init()
             self.font = pygame.font.SysFont(None, 18)
 
     def _load_images(self) -> None:
@@ -630,10 +629,10 @@ class HeliAttack2Env(gym.Env):
         }
 
     def close(self) -> None:
-        if pygame.get_init():
-            if pygame.display.get_init():
-                pygame.display.quit()
-            pygame.quit()
+        if pygame.font.get_init():
+            pygame.font.quit()
+        if pygame.display.get_init():
+            pygame.display.quit()
         self.window = None
         self.clock = None
         self.font = None

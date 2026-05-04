@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-import numpy as np
 import pygame
 
 from ha2_env import HeliAttack2Env
@@ -125,6 +124,8 @@ def main() -> None:
             )
 
             if args.record_gif is not None and env.window is not None:
+                import numpy as np
+
                 frame3d = pygame.surfarray.array3d(env.window)
                 frames.append(np.transpose(frame3d, (1, 0, 2)))
 

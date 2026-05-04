@@ -121,3 +121,12 @@ Have ChatGPT webchat produce a concrete implementation phase and paste it into `
 - Removed Python-side horizontal mirroring for the player body; inspected AS did not show a hero body `_xscale` flip.
 - Added walking animation alternating `assets_ffdec/images/126.png` and `128.png`.
 - Remaining risk: exact Flash nested-walk-frame cadence still needs verification.
+
+## 2026-05-04 10:30 Europe/Paris - Faster Play Human Startup
+
+- Task: reduce `scripts.play_human` startup time.
+- Changed: `ha2_env.py`, `scripts/play_human.py`, `docs/ai/CURRENT_STATE.md`, `docs/ai/CODEX_SESSION_LOG.md`.
+- Fix: replaced broad `pygame.init()` with targeted display/font init; deferred `numpy` import in `play_human` until GIF recording is used.
+- Result: startup profile to first render improved from about 9.29s to about 0.78s locally.
+- Passed: `py_compile`, `pytest -q`, replay record/verify.
+- Not run: manual GUI gameplay.
