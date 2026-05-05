@@ -10,6 +10,7 @@ replays/
 recordings/
 screenshots/
 reports/parity_traces/
+reference_exports/
 wandb/
 *.gif
 *.mp4
