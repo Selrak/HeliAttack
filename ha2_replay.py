@@ -34,6 +34,8 @@ class JsonlReplayWriter:
             "schema_version": SCHEMA_VERSION,
             "env_name": ENV_NAME,
             "env_version": ENV_VERSION,
+            "training_profile": env.training_profile,
+            "max_episode_steps": env.max_episode_steps,
             "seed": int(seed),
             "initial_observation": to_jsonable(initial_obs),
             "initial_state": env.get_state(),
@@ -107,7 +109,11 @@ def verify_replay_file(path: str | Path) -> int:
     if header.get("schema_version") != SCHEMA_VERSION:
         raise AssertionError(f"Unsupported replay schema: {header.get('schema_version')}")
 
-    env = HeliAttack2Env(render_mode=None)
+    env = HeliAttack2Env(
+        render_mode=None,
+        training_profile=header.get("training_profile", "legacy"),
+        max_episode_steps=header.get("max_episode_steps"),
+    )
     obs, _info = env.reset(seed=int(header["seed"]))
     if to_jsonable(obs) != header["initial_observation"]:
         raise AssertionError("Initial observation mismatch")

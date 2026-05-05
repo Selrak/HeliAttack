@@ -62,6 +62,47 @@ HUD_HEALTH_X = 429
 HUD_HEALTH_Y = 0
 HUD_HEALTH_BITMAP_X = 4
 HUD_HEALTH_BITMAP_Y = 0
+TRAINING_PROFILES = {"legacy", "combat_v1"}
+COMBAT_V1_OBS_FIELDS = (
+    "player_x_norm",
+    "player_y_norm",
+    "player_xspeed_norm",
+    "player_yspeed_norm",
+    "player_health",
+    "grounded",
+    "jumping",
+    "double_jump_used",
+    "ducking",
+    "hyperjump_charge",
+    "gun_rotation_sin",
+    "gun_rotation_cos",
+    "aim_rotation_sin",
+    "aim_rotation_cos",
+    "gun_ready",
+    "gun_reload_fraction",
+    "player_bullet_count",
+    "has_enemy",
+    "enemy_rel_x",
+    "enemy_rel_y",
+    "enemy_xspeed",
+    "enemy_yspeed",
+    "enemy_health",
+    "enemy_visible",
+    "enemy_gun_rotation_sin",
+    "enemy_gun_rotation_cos",
+    "enemy_shoot_phase",
+    "enemy_bullet_count",
+    "has_nearest_enemy_bullet",
+    "nearest_enemy_bullet_rel_x",
+    "nearest_enemy_bullet_rel_y",
+    "nearest_enemy_bullet_xspeed",
+    "nearest_enemy_bullet_yspeed",
+    "world_x",
+    "world_y",
+    "heli_kills",
+    "score",
+)
+COMBAT_V1_OBS_SIZE = len(COMBAT_V1_OBS_FIELDS)
 
 
 class HeliAttack2Env(gym.Env):
@@ -82,27 +123,44 @@ class HeliAttack2Env(gym.Env):
         auto_render: bool = True,
         spawn_default_heli: bool = True,
         respawn_helis: bool = True,
+        training_profile: str = "legacy",
+        max_episode_steps: int | None = None,
     ):
         super().__init__()
+        if training_profile not in TRAINING_PROFILES:
+            raise ValueError(
+                f"Unknown training_profile {training_profile!r}; "
+                f"expected one of {sorted(TRAINING_PROFILES)}"
+            )
+        if max_episode_steps is not None and int(max_episode_steps) <= 0:
+            raise ValueError("max_episode_steps must be positive or None")
         self.render_mode = render_mode
         self.assets_dir = Path(assets_dir) if assets_dir is not None else HA2_ASSET_DIR
         self.auto_render = auto_render
         self.spawn_default_heli = bool(spawn_default_heli)
         self.respawn_helis = bool(respawn_helis)
+        self.training_profile = training_profile
+        self.max_episode_steps = None if max_episode_steps is None else int(max_episode_steps)
 
         # ACTION SPACE: [Move(left/idle/right), Jump, Duck, Boost, AimBin, Fire]
         self.action_space = spaces.MultiDiscrete([3, 2, 2, 2, AIM_BINS, 2])
 
-        map_pixel_width = len(const.FULL_MAP_DATA[0]) * const.TILE_SIZE
-        map_pixel_height = len(const.FULL_MAP_DATA) * const.TILE_SIZE
-        high = np.array(
-            [map_pixel_width * 2.0, map_pixel_height * 2.0, 100.0, 100.0],
-            dtype=np.float32,
-        )
-        self.observation_space = spaces.Box(low=-high, high=high, dtype=np.float32)
-
         self.map_width = len(const.FULL_MAP_DATA[0])
         self.map_height = len(const.FULL_MAP_DATA)
+        self.map_pixel_width = self.map_width * const.TILE_SIZE
+        self.map_pixel_height = self.map_height * const.TILE_SIZE
+        if self.training_profile == "legacy":
+            high = np.array(
+                [self.map_pixel_width * 2.0, self.map_pixel_height * 2.0, 100.0, 100.0],
+                dtype=np.float32,
+            )
+            self.observation_space = spaces.Box(low=-high, high=high, dtype=np.float32)
+        else:
+            self.observation_space = spaces.Box(
+                low=-np.ones(COMBAT_V1_OBS_SIZE, dtype=np.float32),
+                high=np.ones(COMBAT_V1_OBS_SIZE, dtype=np.float32),
+                dtype=np.float32,
+            )
         self.map_data = self._make_runtime_map()
         self.window_size = (const.SCREEN_WIDTH, const.SCREEN_HEIGHT)
 
@@ -169,6 +227,9 @@ class HeliAttack2Env(gym.Env):
         self.last_reward = 0.0
         self.last_terminated = False
         self.last_truncated = False
+        self.last_termination_reason = "none"
+        self.last_reward_breakdown: dict[str, float] | None = None
+        self.episode_step_count = 0
         self.last_contact = self._empty_contact()
         self.last_camera = (0.0, 0.0)
         self.world_x = 0.0
@@ -344,6 +405,9 @@ class HeliAttack2Env(gym.Env):
         self.last_reward = 0.0
         self.last_terminated = False
         self.last_truncated = False
+        self.last_termination_reason = "none"
+        self.last_reward_breakdown = None
+        self.episode_step_count = 0
         self.last_contact = self._empty_contact()
         self.last_camera = self.get_camera()
         self.last_gun_event = self._empty_gun_event()
@@ -355,7 +419,120 @@ class HeliAttack2Env(gym.Env):
         return self._get_obs(), self.get_debug_info()
 
     def _get_obs(self) -> np.ndarray:
+        if self.training_profile == "combat_v1":
+            return self._get_combat_v1_obs()
+        return self._get_legacy_obs()
+
+    def _get_legacy_obs(self) -> np.ndarray:
         return np.array([self._x, self._y, self.xspeed, self.yspeed], dtype=np.float32)
+
+    def _clip_norm(self, value: float, scale: float) -> float:
+        if scale <= 0:
+            return 0.0
+        return float(np.clip(float(value) / scale, -1.0, 1.0))
+
+    def _angle_sin_cos(self, degrees: float) -> tuple[float, float]:
+        radians = math.radians(float(degrees))
+        return math.sin(radians), math.cos(radians)
+
+    def _primary_enemy(self) -> dict[str, Any] | None:
+        live_enemies = [enemy for enemy in self.enemies if int(enemy.get("health", 0)) > 0]
+        if not live_enemies:
+            return None
+        return min(
+            live_enemies,
+            key=lambda enemy: (float(enemy["x"]) - self._x) ** 2 + (float(enemy["y"]) - self._y) ** 2,
+        )
+
+    def _nearest_enemy_bullet(self) -> dict[str, Any] | None:
+        if not self.enemy_bullets:
+            return None
+        return min(
+            self.enemy_bullets,
+            key=lambda bullet: (float(bullet["x"]) - self._x) ** 2 + (float(bullet["y"]) - self._y) ** 2,
+        )
+
+    def _get_combat_v1_obs(self) -> np.ndarray:
+        # COMBAT_V1_OBS_FIELDS defines the stable index layout for SB3 MlpPolicy.
+        gun_sin, gun_cos = self._angle_sin_cos(self.gun_rotation)
+        aim_sin, aim_cos = self._angle_sin_cos(self.aim_rotation)
+        if math.isinf(self.gun_reloadtime):
+            reload_fraction = 1.0
+            gun_ready = 1.0
+        else:
+            reload_fraction = float(np.clip(self.gun_reloadtime / MACHINEGUN_RELOADTIME, 0.0, 1.0))
+            gun_ready = 1.0 if self.gun_reloadtime >= MACHINEGUN_RELOADTIME else 0.0
+
+        values = [
+            self._clip_norm(self._x, self.map_pixel_width),
+            self._clip_norm(self._y, self.map_pixel_height),
+            self._clip_norm(self.xspeed, 10.0),
+            self._clip_norm(self.yspeed, float(const.TILE_SIZE)),
+            float(np.clip(self.health / PLAYER_DEFAULT_HEALTH, 0.0, 1.0)),
+            1.0 if self.jump == 0 and self.yspeed == 0 else 0.0,
+            1.0 if self.jump else 0.0,
+            1.0 if self.jump2 else 0.0,
+            1.0 if self.duck else 0.0,
+            float(np.clip(self.hyperjump / 150.0, 0.0, 1.0)),
+            gun_sin,
+            gun_cos,
+            aim_sin,
+            aim_cos,
+            gun_ready,
+            reload_fraction,
+            float(np.clip(len(self.bullets) / 20.0, 0.0, 1.0)),
+        ]
+
+        enemy = self._primary_enemy()
+        if enemy is None:
+            values.extend([0.0] * 10)
+        else:
+            enemy_gun_sin, enemy_gun_cos = self._angle_sin_cos(
+                float(enemy.get("rotation", 0.0)) + float(enemy.get("gun_rotation", 0.0))
+            )
+            shoot_period = max(10, HELI_SHOOT_RELOAD_BASE - self.level)
+            values.extend(
+                [
+                    1.0,
+                    self._clip_norm(float(enemy["x"]) - self._x, const.SCREEN_WIDTH),
+                    self._clip_norm(float(enemy["y"]) - self._y, const.SCREEN_HEIGHT),
+                    self._clip_norm(float(enemy["xspeed"]), 10.0),
+                    self._clip_norm(float(enemy["yspeed"]), 10.0),
+                    float(np.clip(int(enemy["health"]) / max(1, int(enemy["max_health"])), 0.0, 1.0)),
+                    1.0 if enemy.get("visible", True) else 0.0,
+                    enemy_gun_sin,
+                    enemy_gun_cos,
+                    float(np.clip((int(enemy.get("shoot", 0)) % shoot_period) / shoot_period, 0.0, 1.0)),
+                ]
+            )
+
+        bullet = self._nearest_enemy_bullet()
+        values.append(float(np.clip(len(self.enemy_bullets) / 20.0, 0.0, 1.0)))
+        if bullet is None:
+            values.extend([0.0] * 5)
+        else:
+            values.extend(
+                [
+                    1.0,
+                    self._clip_norm(float(bullet["x"]) - self._x, const.SCREEN_WIDTH),
+                    self._clip_norm(float(bullet["y"]) - self._y, const.SCREEN_HEIGHT),
+                    self._clip_norm(float(bullet["xspeed"]), 10.0),
+                    self._clip_norm(float(bullet["yspeed"]), 10.0),
+                ]
+            )
+
+        values.extend(
+            [
+                self._clip_norm(self.world_x, max(1.0, abs(self._world_min_x()))),
+                self._clip_norm(self.world_y, max(1.0, abs(self._world_min_y()))),
+                float(np.clip(self.rthelis / 50.0, 0.0, 1.0)),
+                float(np.clip(self.score / 5000.0, 0.0, 1.0)),
+            ]
+        )
+        obs = np.asarray(values, dtype=np.float32)
+        if obs.shape != (COMBAT_V1_OBS_SIZE,):
+            raise AssertionError(f"combat_v1 observation size mismatch: {obs.shape}")
+        return obs
 
     def _hit_check(self, cy, cx, cy2, cx2, type_val=1, equal=0, hold=0) -> int:
         count = 0
@@ -925,6 +1102,7 @@ class HeliAttack2Env(gym.Env):
     def step(self, action):
         action = self._normalize_action(action)
         move_action, jump_action, duck_action, boost_action, aim_bin, fire_action = action
+        before_score = int(self.score)
         contact = self._empty_contact()
         gun_event = self._empty_gun_event()
         gun_event["removed_bullet_ids"] = self._update_bullets()
@@ -1134,16 +1312,51 @@ class HeliAttack2Env(gym.Env):
         self._maybe_spawn_default_heli(contact, enemy_event)
         self.lastHealth = int(self.health)
 
-        reward = 0.1
-        terminated = bool(self._y > self.map_height * const.TILE_SIZE)
-        if terminated:
-            reward = -10.0
+        fell = bool(self._y > self.map_height * const.TILE_SIZE)
+        player_dead = bool(self.health <= 0)
+        self.episode_step_count += 1
+
+        reward_breakdown = None
+        termination_reason = "none"
+        truncated = False
+        if self.training_profile == "legacy":
+            reward = 0.1
+            terminated = fell
+            if terminated:
+                reward = -10.0
+                termination_reason = "fall"
+        else:
+            killed_helis = len(enemy_event["killed_enemy_ids"])
+            score_delta = max(0, int(self.score) - before_score)
+            player_damage = int(enemy_event["player_damage"])
+            terminated = fell or player_dead
+            if fell:
+                termination_reason = "fall"
+            elif player_dead:
+                termination_reason = "player_death"
+            elif (
+                self.max_episode_steps is not None
+                and self.episode_step_count >= self.max_episode_steps
+            ):
+                truncated = True
+                termination_reason = "time_limit"
+
+            reward_breakdown = {
+                "living": 0.01,
+                "enemy_damage": 0.05 * float(score_delta),
+                "kill": 5.0 * float(killed_helis),
+                "player_damage": -0.10 * float(player_damage),
+                "terminal": -25.0 if terminated else 0.0,
+            }
+            reward = float(sum(reward_breakdown.values()))
 
         self.tick += 1
         self.last_action = action
         self.last_reward = float(reward)
         self.last_terminated = terminated
-        self.last_truncated = False
+        self.last_truncated = truncated
+        self.last_termination_reason = termination_reason
+        self.last_reward_breakdown = reward_breakdown
         self.last_contact = contact
         self.last_camera = self.get_camera()
         self.last_gun_event = gun_event
@@ -1152,7 +1365,7 @@ class HeliAttack2Env(gym.Env):
         if self.auto_render and self.render_mode in ["human", "rgb_array"]:
             self.render()
 
-        return self._get_obs(), reward, terminated, False, self.get_debug_info()
+        return self._get_obs(), reward, terminated, truncated, self.get_debug_info()
 
     def get_camera(self) -> tuple[float, float]:
         return float(self.world_x), float(self.world_y)
@@ -1676,7 +1889,7 @@ class HeliAttack2Env(gym.Env):
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
     def get_debug_info(self) -> dict[str, Any]:
-        return {
+        info = {
             "tick": self.tick,
             "state_hash": self.state_hash(),
             "state": self.get_state(),
@@ -1701,6 +1914,16 @@ class HeliAttack2Env(gym.Env):
             "active_enemy_bullets": len(self.enemy_bullets),
             "last_action": list(self.last_action),
         }
+        if self.training_profile == "combat_v1":
+            info["training_profile"] = self.training_profile
+            info["termination_reason"] = self.last_termination_reason
+            info["reward_breakdown"] = (
+                dict(self.last_reward_breakdown)
+                if self.last_reward_breakdown is not None
+                else None
+            )
+            info["episode_step_count"] = int(self.episode_step_count)
+        return info
 
     def close(self) -> None:
         if pygame.font.get_init():

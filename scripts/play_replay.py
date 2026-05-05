@@ -17,7 +17,12 @@ def main() -> None:
     args = parser.parse_args()
 
     header, steps = load_replay(args.replay)
-    env = HeliAttack2Env(render_mode="human", auto_render=False)
+    env = HeliAttack2Env(
+        render_mode="human",
+        auto_render=False,
+        training_profile=header.get("training_profile", "legacy"),
+        max_episode_steps=header.get("max_episode_steps"),
+    )
     env.reset(seed=int(header["seed"]))
     clock = pygame.time.Clock()
     paused = args.start_paused
