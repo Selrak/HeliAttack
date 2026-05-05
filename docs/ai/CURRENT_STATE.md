@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-04 13:52 Europe/Paris
+Last updated: 2026-05-05 Europe/Paris
 
 ## What Appears to Work
 - Python 3.11.9 is available locally; `.venv` has pytest and SB3 installed.
@@ -8,9 +8,19 @@ Last updated: 2026-05-04 13:52 Europe/Paris
 - Headless env reset/step works and measured about 44,982 steps/sec in one local smoke run.
 - `rgb_array` render smoke works with shape `(320, 450, 3)`.
 - JSONL replay record/verify works for `replays/smoke.jsonl`.
-- Playable GUI, replay GUI, screenshot hotkey, FFDEC tile/player rendering, and SB3 train/evaluate/watch entry points now exist.
+- Playable GUI, replay GUI, screenshot hotkey, side-panel debug display, FFDEC tile/player rendering, and SB3 train/evaluate/watch entry points now exist.
 - `play_human` startup was reduced by avoiding broad `pygame.init()`; local profile reached first render in about 0.78s.
 - Scripted movement trace generation exists for idle, walk right, jump hold, double jump, duck/stand, and hyperjump.
+- Default MachineGun firing exists with AS constants, deterministic env-local spread RNG, bullet state hashing/replay debug, Pygame bullet rendering, and `fire_right_60` scripted trace.
+- MachineGun is rendered from `assets_ffdec/sprites/DefineSprite_107/1.png` and uses FFDEC gun/barrel placement data for visual registration. Bullet spawn logic was not changed in the visual placement pass.
+- Continuous Heli combat exists: default Heli queues on reset and spawns after first ground contact, dead Helis are removed, kill counters update, and replacement Helis spawn with AS-style `addEnemy` coordinates.
+- Heli combat includes AS-backed `heliFrame` movement/gun aiming/shoot cadence, nested Heli gun rendering, enemy bullets, player health damage, MachineGun-to-Heli damage, state hashing, and scripted traces.
+- `heli_shoots_hero_240` now deterministically shows enemy bullet damage: initial health 100, final health 90, first damaging enemy bullet id 12 at frame 240.
+- `kill_heli_respawn_600` deterministically shows Heli death plus replacement spawn.
+- Heli rendering composes visible FFDEC bitmaps `images/78.png` and `images/77.png`; the green `Heli.hit` child is not rendered by default.
+- Player healthbar HUD renders with original FFDEC healthbar bitmaps and the AS bottom-anchored mask-scale rule.
+- `scripts.play_human` accepts both `WASD` and `ZQSD` movement keys, and its mouse input helper falls back cleanly when no video system is active.
+- `scripts/export_ffdec_reference.ps1` can export broad FFDEC reference data from a SWF and auto-detects `C:\Program Files (x86)\FFDec\ffdec-cli.exe`.
 - Charles manually exercised GUI play/replay checks after the scripted trace phase and reported they looked OK.
 
 ## What Is Unknown
@@ -18,9 +28,11 @@ Last updated: 2026-05-04 13:52 Europe/Paris
 - Scripted traces are Python simulator traces only; they have not been compared against Flash yet.
 - AS bit-for-bit parity is a goal, but no parity test harness was found.
 - GIF recording still needs manual validation.
+- MachineGun GUI firing/replay rendering still needs Charles manual feel/parity checks.
+- New Heli gun/enemy-bullet GUI feel still needs Charles manual checks.
 
 ## Current Architecture
-- `ha2_env.py` contains the main runtime architecture: environment state, player physics, collision checks against `const.FULL_MAP_DATA`, rendering, and state/hash debug hooks.
+- `ha2_env.py` contains the main runtime architecture: environment state, player physics, default MachineGun/bullets, one default Heli enemy target, collision checks against `const.FULL_MAP_DATA`, rendering, and state/hash debug hooks.
 - `ha2_replay.py` provides deterministic JSONL replay writing/loading/verification.
 - `scripts/` contains manual play, replay, screenshot, and minimal SB3 pipeline entry points.
 - `tests/` contains pytest smoke tests.
@@ -35,13 +47,20 @@ Last updated: 2026-05-04 13:52 Europe/Paris
 - No HA3 implementation was found during bootstrap inspection.
 
 ## Current Risks and Unclear Points
-- Camera/parallax are a known approximation versus AS stateful `world._x/_y` threshold scrolling.
+- Camera now has minimal AS-style stateful `world_x/world_y/worldpos` for Heli/projectiles; parallax and full `heroStart` lifecycle remain simplified.
+- MachineGun visual placement now uses Charles-provided FFDEC metadata; exact visual parity still needs manual Flash comparison.
+- Projectile active-region removal uses Python `worldpos/stw/sth` plus tile collision.
+- Heli spawn timing is now a first-ground-contact proxy for AS `heroStart`, not the full parachute/start lifecycle.
+- Heli hitbox still uses FFDEC `Heli.hit` placement metadata but remains a rectangle approximation of Flash `hitTest`.
+- Heli death respawn is implemented; non-training side effects remain omitted: pickups, drops, random weapon rewards, explosions, shards, blood, sounds, and bullet-time refill.
+- Only the original player healthbar HUD is implemented; score/time/ammo/reload/hyperjump HUD composition remains future work.
 - Player bitmap registration, nested walk cadence, AS casing quirks, and edge `hitCheck` behavior remain uncertain; see `docs/parity_notes.md`.
 - The generated constants file is large and should not be edited manually without a clear reason.
 - Existing worktree has many modified/untracked files; future Codex sessions must avoid reverting user work.
 
 ## Manual Control Update
 - `scripts.play_human` supports `F12` screenshots saved as incrementing PNG files under `screenshots/` by default.
+- Debug text is rendered in a right-side panel so it does not cover the game area.
 
 ## Handoff Behavior
 - Future Codex sessions should ask clarification questions instead of making hypotheses when requirements are unclear.

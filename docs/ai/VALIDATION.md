@@ -9,7 +9,19 @@ python -m scripts.record_random_replay --steps 300 --out replays/smoke.jsonl
 python -m scripts.verify_replay replays/smoke.jsonl
 python -m scripts.record_scripted_trace --scenario all
 python -m scripts.verify_replay reports/parity_traces/walk_right_120.jsonl
+python -m scripts.record_scripted_trace --scenario fire_right_60
+python -m scripts.verify_replay reports/parity_traces/fire_right_60.jsonl
+python -m scripts.record_scripted_trace --scenario fire_at_heli_180
+python -m scripts.verify_replay reports/parity_traces/fire_at_heli_180.jsonl
+python -m scripts.record_scripted_trace --scenario heli_shoots_hero_240
+python -m scripts.verify_replay reports/parity_traces/heli_shoots_hero_240.jsonl
+python -m scripts.record_scripted_trace --scenario kill_heli_respawn_600
+python -m scripts.verify_replay reports/parity_traces/kill_heli_respawn_600.jsonl
 ```
+
+Current Heli damage check: `reports/parity_traces/heli_shoots_hero_240_summary.txt` should show `initial_player_health=100`, `final_player_health=90`, `enemy_bullet_hits=1`, and `first_enemy_damage_frame=240`.
+Current Heli respawn check: `reports/parity_traces/kill_heli_respawn_600_summary.txt` should show non-empty `killed_enemy_ids`, a non-`None` `replacement_heli_spawn_frame`, and `active_enemies=1`.
+Manual healthbar check: in `heli_shoots_hero_240`, the original red healthbar at the top-right should shrink after player damage.
 
 Manual GUI checks:
 
@@ -17,6 +29,10 @@ Manual GUI checks:
 python -m scripts.play_human
 python -m scripts.play_replay replays/smoke.jsonl
 python -m scripts.play_replay reports/parity_traces/walk_right_120.jsonl
+python -m scripts.play_replay reports/parity_traces/fire_right_60.jsonl
+python -m scripts.play_replay reports/parity_traces/fire_at_heli_180.jsonl
+python -m scripts.play_replay reports/parity_traces/heli_shoots_hero_240.jsonl
+python -m scripts.play_replay reports/parity_traces/kill_heli_respawn_600.jsonl
 ```
 
 Optional SB3 smoke after installing training dependencies:

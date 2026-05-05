@@ -12,7 +12,7 @@ This repository appears to be an early Python port/simulator for Heli Attack 2, 
 - Stable Baselines3 entry points and `requirements.txt` exist; training is still minimal/scaffold-level.
 
 ## Main Files and Directories
-- `ha2_env.py`: `HeliAttack2Env`, physics step logic, renderer, debug state/hash hooks.
+- `ha2_env.py`: `HeliAttack2Env`, player physics, default MachineGun/bullets, first Heli combat loop, renderer, debug state/hash hooks.
 - `ha2_replay.py`: JSONL replay writer/loader/verifier.
 - `scripts/`: playable GUI, replay record/verify/play, and minimal SB3 train/evaluate/watch scripts.
 - `scripts/record_scripted_trace.py`: deterministic player movement traces for manual parity inspection.
@@ -39,7 +39,8 @@ This repository appears to be an early Python port/simulator for Heli Attack 2, 
 
 ## Constraints and Uncertainties
 - SB3 training/evaluation/watch scripts exist, but remain smoke-level and not tuned.
-- The current simulator models player movement/collision and rendering with `assets_ffdec`; combat, helicopter AI, and projectile systems are not implemented.
+- The current simulator models player movement/collision, FFDEC rendering, default MachineGun projectiles, continuous default-Heli combat, enemy bullets, and player damage. Pickups, weapon switching, drops, and full gameover/HUD combat are not implemented.
 - Minimal training/evaluation/watch scripts exist but have not been end-to-end validated in recent parity work.
 - Exact AS parity has not been proven by automated tests; current validation is limited to compilation and smoke execution.
-- Camera/parallax are currently approximate relative to AS threshold scrolling.
+- Heli movement is AS-backed but not exact: first Heli spawn is a first-ground-contact proxy for AS `heroStart`, and decompiled casing/`timeSetp` quirks still need Flash verification.
+- Heli/player hit detection remains rectangle-based rather than exact Flash shape `hitTest`.
