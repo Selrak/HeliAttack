@@ -21,10 +21,12 @@ Last updated: 2026-05-05 Europe/Paris
 - Player healthbar HUD renders with original FFDEC healthbar bitmaps and the AS bottom-anchored mask-scale rule.
 - `scripts.play_human` accepts both `WASD` and `ZQSD` movement keys, and its mouse input helper falls back cleanly when no video system is active.
 - `scripts/export_ffdec_reference.ps1` can export broad FFDEC reference data from a SWF and auto-detects `C:\Program Files (x86)\FFDec\ffdec-cli.exe`.
+- `training_profile="combat_v1"` is available as an opt-in RL interface: 37-field bounded float32 vector observation, combat-aware reward, player-death/fall termination, and max-step truncation.
+- `scripts.train_parkour`, `scripts.evaluate_model`, and `scripts.watch_model` default to `combat_v1` with `max_episode_steps=1800`.
 - Charles manually exercised GUI play/replay checks after the scripted trace phase and reported they looked OK.
 
 ## What Is Unknown
-- SB3 training/evaluation was not rerun after the FFDEC render change.
+- SB3 smoke runs, but model quality is not meaningful from the 1000-step validation run.
 - Scripted traces are Python simulator traces only; they have not been compared against Flash yet.
 - AS bit-for-bit parity is a goal, but no parity test harness was found.
 - GIF recording still needs manual validation.
@@ -54,6 +56,7 @@ Last updated: 2026-05-05 Europe/Paris
 - Heli hitbox still uses FFDEC `Heli.hit` placement metadata but remains a rectangle approximation of Flash `hitTest`.
 - Heli death respawn is implemented; non-training side effects remain omitted: pickups, drops, random weapon rewards, explosions, shards, blood, sounds, and bullet-time refill.
 - Only the original player healthbar HUD is implemented; score/time/ammo/reload/hyperjump HUD composition remains future work.
+- `combat_v1` is an RL interface layer only; it does not prove AS parity or tune PPO behavior.
 - Player bitmap registration, nested walk cadence, AS casing quirks, and edge `hitCheck` behavior remain uncertain; see `docs/parity_notes.md`.
 - The generated constants file is large and should not be edited manually without a clear reason.
 - Existing worktree has many modified/untracked files; future Codex sessions must avoid reverting user work.

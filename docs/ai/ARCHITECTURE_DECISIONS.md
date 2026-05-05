@@ -41,3 +41,8 @@ This is an append-only decision log. Future ChatGPT/Codex decisions should be ad
 - Decision: Enable deterministic default Heli respawn after Heli death by default (`respawn_helis=True`); env version is now `0.6`.
 - Rationale: AS `heliFrame` calls `addEnemy(300)` after death, and early training needs continuous MachineGun-only targets.
 - Consequences: Death removes the Heli, increments kill counters once, and spawns a replacement using AS-style positioning. Visual rewards/drops/explosions/sounds remain omitted.
+
+## 2026-05-05 - Opt-In Combat Training Profile
+- Decision: Keep legacy env behavior as the default and add `training_profile="combat_v1"` for SB3 training/evaluation/watch.
+- Rationale: Existing replay/parity traces need stable legacy observations and rewards, while RL needs a bounded fixed-size vector observation, combat reward, and episode endings.
+- Consequences: Models are profile-specific; `combat_v1` replays record profile metadata, and old replays remain legacy by default.

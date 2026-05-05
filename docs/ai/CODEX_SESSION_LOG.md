@@ -276,3 +276,16 @@ Have ChatGPT webchat produce a concrete implementation phase and paste it into `
 - Implemented: small leftward healthbar offset; `ZQSD` now maps to left/jump/duck/right alongside existing controls; mouse input in `play_human` falls back cleanly when no video system is active.
 - Validation passed: `py_compile`; `pytest -q` (`36 passed`).
 - Remaining risk: healthbar margin is still a visual approximation.
+
+## 2026-05-05 15:31 +02:00 - combat_v1 RL Interface
+
+- Task: add the first training-ready RL interface slice without changing legacy defaults.
+- Changed: `ha2_env.py`, `ha2_replay.py`, `scripts/train_parkour.py`, `scripts/evaluate_model.py`, `scripts/watch_model.py`, `scripts/play_replay.py`, `tests/test_rl_interface.py`, `.gitignore`, and handoff docs.
+- Observation: `combat_v1` uses 37 float32 fields: player state, gun state, primary Heli state, nearest enemy-bullet threat, world/camera, kills, and score.
+- Reward: `0.01 + 0.05*score_delta + 5*killed_helis - 0.10*player_damage - 25 if terminated`.
+- Episode rules: legacy unchanged; `combat_v1` terminates on fall/player death and truncates at `max_episode_steps` with `termination_reason`.
+- Validation passed: `py_compile`; `pytest -q` (`46 passed`); random replay record/verify; scripted trace all; key replay verifies; SB3 `check_env`; `train_parkour --total-timesteps 1000 --n-envs 1 --wandb off`; `evaluate_model --episodes 1`.
+- Manual GUI not run by Codex.
+- Bugs/workarounds: replay headers now store optional training profile/max steps so combat-profile replays verify while old replays remain legacy.
+- Remaining risks: reward is a first-pass training signal, PPO quality is not evaluated, and AS parity is unaffected/unproven by this RL interface.
+- Next: review short SB3 smoke behavior and decide whether to tune reward/observations or add curriculum tasks.
