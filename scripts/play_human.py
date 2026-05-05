@@ -9,8 +9,8 @@ from ha2_env import HeliAttack2Env
 from ha2_replay import JsonlReplayWriter
 
 
-def action_from_keys(keys) -> list[int]:
-    left = keys[pygame.K_LEFT] or keys[pygame.K_a]
+def action_from_keys(keys, env: HeliAttack2Env) -> list[int]:
+    left = keys[pygame.K_LEFT] or keys[pygame.K_a] or keys[pygame.K_q]
     right = keys[pygame.K_RIGHT] or keys[pygame.K_d]
     move = 1
     if left and not right:
@@ -18,10 +18,21 @@ def action_from_keys(keys) -> list[int]:
     elif right and not left:
         move = 2
 
-    jump = keys[pygame.K_UP] or keys[pygame.K_w]
+    jump = keys[pygame.K_UP] or keys[pygame.K_w] or keys[pygame.K_z]
     duck = keys[pygame.K_DOWN] or keys[pygame.K_s]
     boost = keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]
-    return [move, int(jump), int(duck), int(boost)]
+    try:
+        mouse_x, mouse_y = pygame.mouse.get_pos()
+        fire = pygame.mouse.get_pressed(num_buttons=3)[0]
+    except pygame.error:
+        mouse_x = env.window_size[0] // 2
+        mouse_y = env.window_size[1] // 2
+        fire = 0
+    mouse_x = max(0, min(mouse_x, env.window_size[0] - 1))
+    mouse_y = max(0, min(mouse_y, env.window_size[1] - 1))
+    cam_x, cam_y = env.get_camera()
+    aim_bin = env.aim_bin_for_world_target(mouse_x - cam_x, mouse_y - cam_y)
+    return [move, int(jump), int(duck), int(boost), aim_bin, int(fire)]
 
 
 def save_screenshot(surface: pygame.Surface, out_dir: Path, frame_index: int) -> Path:
@@ -60,8 +71,8 @@ def main() -> None:
     running = True
 
     print(
-        "Controls: A/D or Left/Right move, W/Up jump, S/Down duck, Shift hyperjump, "
-        "P/Space pause, N step, R reset, F1 debug, F2 slow, Esc quit."
+        "Controls: A/D or Q/D or Left/Right move, W/Z/Up jump, S/Down duck, Shift hyperjump, "
+        "Left mouse aim/fire, P/Space pause, N step, R reset, F1 debug, F2 slow, Esc quit."
     )
 
     env.render(
@@ -69,7 +80,7 @@ def main() -> None:
         debug_collision=collision_overlay,
         debug_lines=[
             "initializing",
-            "controls: F1 debug F2 slow F3 hitboxes P/Space pause N step R reset Esc quit",
+            "controls: mouse aim/fire F1 debug F2 slow F3 hitboxes P/Space pause N step R reset Esc quit",
         ],
     )
 
@@ -102,7 +113,7 @@ def main() -> None:
                             writer.close()
                             writer = None
 
-            action = action_from_keys(pygame.key.get_pressed())
+            action = action_from_keys(pygame.key.get_pressed(), env)
             should_step = not paused or single_step
             if should_step:
                 obs, reward, terminated, truncated, info = env.step(action)
@@ -115,7 +126,7 @@ def main() -> None:
             fps = args.slow_fps if slow_motion else args.fps
             extra = [
                 f"fps={clock.get_fps():.1f} target={fps} paused={paused} slow={slow_motion}",
-                "controls: F1 debug F2 slow F3 hitboxes F12 screenshot P/Space pause N step R reset Esc quit",
+                "controls: mouse aim/fire F1 debug F2 slow F3 hitboxes F12 screenshot P/Space pause N step R reset Esc quit",
             ]
             env.render(
                 debug_overlay=debug_overlay,

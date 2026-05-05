@@ -15,12 +15,17 @@ from ha2_replay import JsonlReplayWriter, verify_replay_file
 
 Action = list[int]
 
-IDLE: Action = [1, 0, 0, 0]
-LEFT: Action = [0, 0, 0, 0]
-RIGHT: Action = [2, 0, 0, 0]
-JUMP: Action = [1, 1, 0, 0]
-DUCK: Action = [1, 0, 1, 0]
-BOOST: Action = [1, 0, 0, 1]
+RIGHT_AIM = 0
+HELI_AIM = 28
+IDLE: Action = [1, 0, 0, 0, RIGHT_AIM, 0]
+LEFT: Action = [0, 0, 0, 0, RIGHT_AIM, 0]
+RIGHT: Action = [2, 0, 0, 0, RIGHT_AIM, 0]
+JUMP: Action = [1, 1, 0, 0, RIGHT_AIM, 0]
+DUCK: Action = [1, 0, 1, 0, RIGHT_AIM, 0]
+BOOST: Action = [1, 0, 0, 1, RIGHT_AIM, 0]
+FIRE_RIGHT: Action = [1, 0, 0, 0, RIGHT_AIM, 1]
+AIM_HELI_IDLE: Action = [1, 0, 0, 0, HELI_AIM, 0]
+FIRE_HELI: Action = [1, 0, 0, 0, HELI_AIM, 1]
 
 DEFAULT_SELECTED_FRAMES = (0, 1, 2, 10, 30, 60, 70, 80, 119)
 
@@ -92,6 +97,30 @@ def build_scenarios() -> dict[str, Scenario]:
             description="Wait for spawn fall to settle, then use charged hyperjump.",
             actions=tuple(repeated(IDLE, 60) + repeated(BOOST, 3) + repeated(IDLE, 57)),
         ),
+        "fire_right_60": Scenario(
+            name="fire_right_60",
+            frame_count=120,
+            description="Wait for spawn fall to settle, then aim right and hold MachineGun fire for 60 frames.",
+            actions=tuple(repeated(IDLE, 60) + repeated(FIRE_RIGHT, 60)),
+        ),
+        "fire_at_heli_180": Scenario(
+            name="fire_at_heli_180",
+            frame_count=240,
+            description="Aim at the default Heli during spawn settle, then fire for 180 frames.",
+            actions=tuple(repeated(AIM_HELI_IDLE, 60) + repeated(FIRE_HELI, 180)),
+        ),
+        "heli_shoots_hero_240": Scenario(
+            name="heli_shoots_hero_240",
+            frame_count=240,
+            description="Keep the hero exposed while the default Heli aims and fires enemy bullets.",
+            actions=tuple(repeated(IDLE, 240)),
+        ),
+        "kill_heli_respawn_600": Scenario(
+            name="kill_heli_respawn_600",
+            frame_count=600,
+            description="Fire at the default Heli long enough to kill it and observe a replacement spawn.",
+            actions=tuple(repeated(AIM_HELI_IDLE, 60) + repeated(FIRE_HELI, 540)),
+        ),
     }
     return scenarios
 
@@ -143,7 +172,14 @@ def write_summary(
     max_y: float,
     selected_states: dict[int, dict],
     replay_verified: bool,
+    bullet_trace: dict | None = None,
+    enemy_damage_trace: dict | None = None,
+    combat_trace: dict | None = None,
 ) -> None:
+    gun = final_state.get("gun", {})
+    combat = final_state.get("combat", {})
+    enemy_damage_trace = enemy_damage_trace or {}
+    combat_trace = combat_trace or {}
     lines = [
         f"scenario={scenario.name}",
         f"description={scenario.description}",
@@ -155,8 +191,39 @@ def write_summary(
         f"max_x={max_x:.8f}",
         f"min_y={min_y:.8f}",
         f"max_y={max_y:.8f}",
-        "selected_frames:",
+        f"gun_shots={gun.get('shots', 0)}",
+        f"total_bullets_spawned={gun.get('total_bullets_spawned', 0)}",
+        f"active_bullets={len(final_state.get('bullets', []))}",
+        f"initial_player_health={initial_state.get('health', 0)}",
+        f"final_player_health={final_state.get('health', 0)}",
+        f"player_health={final_state.get('health', 0)}",
+        f"enemy_bullets_spawned={combat.get('total_enemy_bullets_spawned', 0)}",
+        f"enemy_bullet_hits={combat.get('enemy_bullet_hits', 0)}",
+        f"first_enemy_damage_frame={enemy_damage_trace.get('frame')}",
+        f"first_enemy_damage_bullet_id={enemy_damage_trace.get('bullet_id')}",
+        f"first_enemy_damage_amount={enemy_damage_trace.get('amount')}",
+        f"active_enemy_bullets={len(final_state.get('enemy_bullets', []))}",
+        f"score={combat.get('score', 0)}",
+        f"hits={combat.get('hits', 0)}",
+        f"helis_counter={combat.get('helis', 0)}",
+        f"helis_killed={combat.get('rthelis', 0)}",
+        f"total_enemies_spawned={combat.get('total_enemies_spawned', 0)}",
+        f"spawned_enemy_ids={state_line(combat_trace.get('spawned_enemy_ids', []))}",
+        f"killed_enemy_ids={state_line(combat_trace.get('killed_enemy_ids', []))}",
+        f"first_heli_death_frame={combat_trace.get('first_heli_death_frame')}",
+        f"replacement_heli_spawn_frame={combat_trace.get('replacement_heli_spawn_frame')}",
+        f"active_enemies={len(final_state.get('enemies', []))}",
     ]
+    if bullet_trace is not None:
+        lines.extend(
+            [
+                f"first_bullet_id={bullet_trace.get('id')}",
+                f"first_bullet_initial={state_line(bullet_trace.get('initial'))}",
+                f"first_bullet_final={state_line(bullet_trace.get('final'))}",
+                f"first_bullet_removed_frame={bullet_trace.get('removed_frame')}",
+            ]
+        )
+    lines.append("selected_frames:")
     for frame in sorted(selected_states):
         lines.append(f"  frame_{frame:04d}={state_line(selected_states[frame])}")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -211,6 +278,15 @@ def record_scenario(
     xs = [float(initial_state["x"])]
     ys = [float(initial_state["y"])]
     steps_written = 0
+    first_bullet_id = None
+    first_bullet_initial = None
+    first_bullet_final = None
+    first_bullet_removed_frame = None
+    first_enemy_damage_trace = None
+    spawned_enemy_ids: list[int] = []
+    killed_enemy_ids: list[int] = []
+    first_heli_death_frame = None
+    replacement_heli_spawn_frame = None
 
     try:
         maybe_capture(0)
@@ -222,6 +298,46 @@ def record_scenario(
                 state = snapshot(env)
                 xs.append(float(state["x"]))
                 ys.append(float(state["y"]))
+                enemy_event = info.get("enemy_event", {})
+                step_spawned_enemy_ids = [
+                    int(enemy_id) for enemy_id in enemy_event.get("spawned_enemy_ids", [])
+                ]
+                step_killed_enemy_ids = [
+                    int(enemy_id) for enemy_id in enemy_event.get("killed_enemy_ids", [])
+                ]
+                spawned_enemy_ids.extend(step_spawned_enemy_ids)
+                killed_enemy_ids.extend(step_killed_enemy_ids)
+                if first_heli_death_frame is None and step_killed_enemy_ids:
+                    first_heli_death_frame = int(state["tick"])
+                if (
+                    first_heli_death_frame is not None
+                    and replacement_heli_spawn_frame is None
+                    and step_spawned_enemy_ids
+                ):
+                    replacement_heli_spawn_frame = int(state["tick"])
+                if (
+                    first_enemy_damage_trace is None
+                    and int(enemy_event.get("player_damage", 0)) > 0
+                ):
+                    removed = enemy_event.get("removed_enemy_bullet_ids", [])
+                    first_enemy_damage_trace = {
+                        "frame": int(state["tick"]),
+                        "bullet_id": int(removed[0]) if removed else None,
+                        "amount": int(enemy_event["player_damage"]),
+                    }
+                current_bullets = state.get("bullets", [])
+                if first_bullet_id is None and current_bullets:
+                    first_bullet_id = current_bullets[0]["id"]
+                    first_bullet_initial = dict(current_bullets[0])
+                if first_bullet_id is not None:
+                    first_match = next(
+                        (bullet for bullet in current_bullets if bullet["id"] == first_bullet_id),
+                        None,
+                    )
+                    if first_match is not None:
+                        first_bullet_final = dict(first_match)
+                    elif first_bullet_removed_frame is None:
+                        first_bullet_removed_frame = int(state["tick"])
                 maybe_capture(int(state["tick"]))
                 if terminated or truncated:
                     break
@@ -231,6 +347,20 @@ def record_scenario(
         env.close()
 
     replay_verified = verify_replay_file(replay_path) == steps_written
+    bullet_trace = None
+    if first_bullet_id is not None:
+        bullet_trace = {
+            "id": first_bullet_id,
+            "initial": first_bullet_initial,
+            "final": first_bullet_final,
+            "removed_frame": first_bullet_removed_frame,
+        }
+    combat_trace = {
+        "spawned_enemy_ids": spawned_enemy_ids,
+        "killed_enemy_ids": killed_enemy_ids,
+        "first_heli_death_frame": first_heli_death_frame,
+        "replacement_heli_spawn_frame": replacement_heli_spawn_frame,
+    }
     write_summary(
         summary_path,
         scenario=scenario,
@@ -243,6 +373,9 @@ def record_scenario(
         max_y=max(ys),
         selected_states=selected_states,
         replay_verified=replay_verified,
+        bullet_trace=bullet_trace,
+        enemy_damage_trace=first_enemy_damage_trace,
+        combat_trace=combat_trace,
     )
 
     if write_gif and gif_frames:
