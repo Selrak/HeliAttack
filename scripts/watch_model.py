@@ -27,6 +27,8 @@ def main() -> None:
     parser.add_argument("--stochastic", action="store_true")
     parser.add_argument("--save-replay", type=Path)
     parser.add_argument("--record-gif", type=Path)
+    parser.add_argument("--training-profile", choices=["legacy", "combat_v1"], default="combat_v1")
+    parser.add_argument("--max-episode-steps", type=int, default=1800)
     args = parser.parse_args()
 
     PPO = _load_ppo()
@@ -35,7 +37,12 @@ def main() -> None:
         raise SystemExit(f"Model not found: {model_path}")
 
     model = PPO.load(model_path)
-    env = HeliAttack2Env(render_mode="human", auto_render=False)
+    env = HeliAttack2Env(
+        render_mode="human",
+        auto_render=False,
+        training_profile=args.training_profile,
+        max_episode_steps=args.max_episode_steps,
+    )
     obs, _info = env.reset(seed=args.seed)
     writer = (
         JsonlReplayWriter(args.save_replay, env, args.seed, obs)

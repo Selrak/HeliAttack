@@ -32,6 +32,8 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--save-replays", action="store_true")
     parser.add_argument("--out", type=Path, default=Path("reports/eval.json"))
+    parser.add_argument("--training-profile", choices=["legacy", "combat_v1"], default="combat_v1")
+    parser.add_argument("--max-episode-steps", type=int, default=1800)
     args = parser.parse_args()
 
     PPO = _load_ppo()
@@ -44,7 +46,11 @@ def main() -> None:
     stats = []
 
     for episode in range(args.episodes):
-        env = HeliAttack2Env(render_mode=None)
+        env = HeliAttack2Env(
+            render_mode=None,
+            training_profile=args.training_profile,
+            max_episode_steps=args.max_episode_steps,
+        )
         obs, _info = env.reset(seed=args.seed + episode)
         writer = None
         if args.save_replays:
@@ -83,8 +89,12 @@ def main() -> None:
                 "length": length,
                 "terminated": terminated,
                 "truncated": truncated,
-                "termination_reason": "fall" if terminated else "truncated" if truncated else "none",
-                "falls": int(terminated),
+                "termination_reason": info.get(
+                    "termination_reason",
+                    "fall" if terminated else "time_limit" if truncated else "none",
+                ),
+                "falls": int(info.get("termination_reason") == "fall"),
+                "deaths": int(info.get("termination_reason") == "player_death"),
                 "max_x": max_x,
                 "action_frequencies": {"|".join(map(str, k)): v for k, v in actions.items()},
             }
@@ -94,6 +104,8 @@ def main() -> None:
     mean_length = sum(row["length"] for row in stats) / len(stats)
     report = {
         "model": str(model_path),
+        "training_profile": args.training_profile,
+        "max_episode_steps": args.max_episode_steps,
         "episodes": args.episodes,
         "mean_reward": mean_reward,
         "mean_episode_length": mean_length,

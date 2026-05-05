@@ -28,6 +28,8 @@ def main() -> None:
     parser.add_argument("--device", default="auto")
     parser.add_argument("--tensorboard-log", type=Path, default=Path("runs/tensorboard"))
     parser.add_argument("--wandb", choices=["off", "on"], default="off")
+    parser.add_argument("--training-profile", choices=["legacy", "combat_v1"], default="combat_v1")
+    parser.add_argument("--max-episode-steps", type=int, default=1800)
     args = parser.parse_args()
 
     PPO, CheckpointCallback, EvalCallback, Monitor, DummyVecEnv = _load_sb3()
@@ -39,14 +41,24 @@ def main() -> None:
 
     def make_env(rank: int):
         def _init():
-            env = HeliAttack2Env(render_mode=None)
+            env = HeliAttack2Env(
+                render_mode=None,
+                training_profile=args.training_profile,
+                max_episode_steps=args.max_episode_steps,
+            )
             env.reset(seed=args.seed + rank)
             return Monitor(env)
 
         return _init
 
     env = DummyVecEnv([make_env(i) for i in range(args.n_envs)])
-    eval_env = Monitor(HeliAttack2Env(render_mode=None))
+    eval_env = Monitor(
+        HeliAttack2Env(
+            render_mode=None,
+            training_profile=args.training_profile,
+            max_episode_steps=args.max_episode_steps,
+        )
+    )
 
     callbacks = [
         CheckpointCallback(save_freq=5_000, save_path=str(checkpoint_dir), name_prefix="ha2"),
