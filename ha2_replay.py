@@ -64,6 +64,13 @@ class JsonlReplayWriter:
                     "camera": info.get("camera"),
                     "contact": info.get("contact"),
                     "grounded": info.get("grounded"),
+                    "gun": info.get("gun"),
+                    "gun_event": info.get("gun_event"),
+                    "active_bullets": info.get("active_bullets"),
+                    "player_health": info.get("player_health"),
+                    "combat": info.get("combat"),
+                    "enemy_event": info.get("enemy_event"),
+                    "active_enemy_bullets": info.get("active_enemy_bullets"),
                 },
             }
         )
