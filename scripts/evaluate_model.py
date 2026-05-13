@@ -4,6 +4,8 @@ import argparse
 from collections import Counter
 from pathlib import Path
 
+import numpy as np
+
 from ha2_env import HeliAttack2Env
 from ha2_replay import JsonlReplayWriter
 from scripts.experiment_utils import (
@@ -159,15 +161,47 @@ def main(args_list: list[str] | None = None) -> None:
                 "total_player_damage": info.get("total_player_damage", 0),
                 "heli_kills": info.get("heli_kills", 0),
                 "heli_hits": info.get("heli_hits", 0),
-                "player_bullets_fired": info.get("player_bullets_fired", 0),
+                "player_shot_attempts": info.get("player_shot_attempts", 0),
+                "player_bullets_spawned": info.get("player_bullets_spawned", 0),
+                "player_shots_spawn_blocked": info.get("player_shots_spawn_blocked", 0),
                 "enemy_bullet_hits": info.get("enemy_bullet_hits", 0),
                 "action_frequencies": {"|".join(map(str, k)): v for k, v in actions.items()},
             }
         )
 
-    mean_reward = sum(row["reward"] for row in stats) / len(stats)
-    mean_length = sum(row["length"] for row in stats) / len(stats)
+    def agg_metric(key: str) -> dict[str, float]:
+        if not stats:
+            return {"mean": 0.0, "std": 0.0, "min": 0.0, "max": 0.0, "sum": 0.0}
+        vals = [float(row[key]) for row in stats]
+        return {
+            "mean": float(np.mean(vals)),
+            "std": float(np.std(vals)),
+            "min": float(np.min(vals)),
+            "max": float(np.max(vals)),
+            "sum": float(np.sum(vals)),
+        }
+
     termination_reason_counts = Counter(row["termination_reason"] for row in stats)
+    
+    # Marginal Action Distributions
+    total_actions = sum(row["length"] for row in stats)
+    marginal_actions = {}
+    if total_actions > 0:
+        action_names = ["move", "jump", "duck", "boost", "aim", "fire"]
+        for action_idx, name in enumerate(action_names):
+            marginal_actions[name] = {}
+            for row in stats:
+                for action_tuple_str, count in row["action_frequencies"].items():
+                    val = action_tuple_str.split("|")[action_idx]
+                    marginal_actions[name][val] = marginal_actions[name].get(val, 0) + count
+            for val in marginal_actions[name]:
+                marginal_actions[name][val] = float(marginal_actions[name][val]) / total_actions
+
+    bullets_spawned_sum = sum(row["player_bullets_spawned"] for row in stats)
+    hit_rate = 0.0
+    if bullets_spawned_sum > 0:
+        hit_rate = sum(row["heli_hits"] for row in stats) / float(bullets_spawned_sum)
+
     report = {
         "experiment": str(layout.path) if layout is not None else None,
         "model": str(model_path),
@@ -175,26 +209,27 @@ def main(args_list: list[str] | None = None) -> None:
         "training_profile": args.training_profile,
         "max_episode_steps": args.max_episode_steps,
         "episodes": args.episodes,
-        "mean_reward": mean_reward,
-        "mean_episode_length": mean_length,
-        "total_heli_kills": sum(row["heli_kills"] for row in stats),
-        "mean_heli_kills": sum(row["heli_kills"] for row in stats) / len(stats) if stats else 0.0,
-        "total_heli_hits": sum(row["heli_hits"] for row in stats),
-        "mean_heli_hits": sum(row["heli_hits"] for row in stats) / len(stats) if stats else 0.0,
-        "total_player_bullets_fired": sum(row["player_bullets_fired"] for row in stats),
-        "mean_player_bullets_fired": sum(row["player_bullets_fired"] for row in stats) / len(stats) if stats else 0.0,
-        "total_player_damage": sum(row["total_player_damage"] for row in stats),
-        "mean_player_damage": sum(row["total_player_damage"] for row in stats) / len(stats) if stats else 0.0,
-        "total_enemy_bullet_hits": sum(row["enemy_bullet_hits"] for row in stats),
-        "mean_enemy_bullet_hits": sum(row["enemy_bullet_hits"] for row in stats) / len(stats) if stats else 0.0,
-        "total_deaths": sum(row["deaths"] for row in stats),
-        "total_falls": sum(row["falls"] for row in stats),
-        "total_timeouts": sum(1 for row in stats if row["termination_reason"] == "time_limit"),
+        "metrics": {
+            "reward": agg_metric("reward"),
+            "length": agg_metric("length"),
+            "heli_kills": agg_metric("heli_kills"),
+            "heli_hits": agg_metric("heli_hits"),
+            "player_shot_attempts": agg_metric("player_shot_attempts"),
+            "player_bullets_spawned": agg_metric("player_bullets_spawned"),
+            "player_shots_spawn_blocked": agg_metric("player_shots_spawn_blocked"),
+            "player_damage": agg_metric("total_player_damage"),
+            "enemy_bullet_hits": agg_metric("enemy_bullet_hits"),
+            "final_score": agg_metric("final_score"),
+            "max_score": agg_metric("max_score"),
+        },
+        "rates": {
+            "hit_rate": hit_rate,
+            "death_rate": sum(row["deaths"] for row in stats) / float(len(stats)) if stats else 0.0,
+            "fall_rate": sum(row["falls"] for row in stats) / float(len(stats)) if stats else 0.0,
+            "timeout_rate": sum(1 for row in stats if row["termination_reason"] == "time_limit") / float(len(stats)) if stats else 0.0,
+        },
         "termination_reason_counts": dict(termination_reason_counts),
-        "episode_rewards": [row["reward"] for row in stats],
-        "episode_lengths": [row["length"] for row in stats],
-        "episode_final_scores": [row["final_score"] for row in stats],
-        "episode_max_scores": [row["max_score"] for row in stats],
+        "marginal_action_distributions": marginal_actions,
         "episodes_detail": stats,
         "replay_paths": replay_paths,
     }

@@ -447,5 +447,43 @@ Set up a robust first real HA2 RL training workflow around the existing `combat_
 ### Remaining Risks
 - The 1000-step smoke run does not guarantee the model will learn; a longer real training run is still needed.
 
-### Recommended Next Action
+### Suggested Next Step
 - Start a real training run on a more powerful machine (e.g., Ubuntu workstation) using `scripts.run_experiment` and monitor the WandB dashboard to evaluate the learning behavior.
+
+## 2026-05-14 01:05 Europe/Paris - RL Diagnostics and Firing Metrics
+
+### Task Attempted
+Improve RL experiment diagnostics by evaluating both best and latest models, generating detailed statistical reports, and clarifying firing metrics.
+
+### Files Changed or Created
+- Updated `ha2_env.py` to differentiate between `player_shot_attempts`, `player_bullets_spawned`, and `player_shots_spawn_blocked` instead of a generic `gun_shots` counter.
+- Updated `scripts/evaluate_model.py` to calculate structured metrics (mean, std, min, max, sum), derived rates (hit, death, fall, timeout), and marginal action distributions.
+- Updated `scripts/run_experiment.py` to evaluate both `best` and `latest` models and append a structured evaluation summary to the experiment's `summary.md`.
+- Updated `docs/ai/CURRENT_STATE.md` and `docs/ai/CODEX_SESSION_LOG.md`.
+
+### Repository Facts Discovered
+- `evaluate_model.py` used simple averages for episode rewards and lengths, lacking the statistical depth needed to analyze variance in model behavior.
+- Firing metrics were conflating a button press with an actual bullet spawn, making hit rate calculations inaccurate when bullets were blocked by walls.
+
+### Commands Run
+- `python -m scripts.run_experiment --total-timesteps 1000 --n-envs 1 --wandb off --eval-episodes 1 --save-replays` (Validation test)
+
+### Validation Result
+- Passed: `ha2_env.py` successfully tracks detailed firing metrics.
+- Passed: `evaluate_model.py` generates detailed structured JSON reports including action distributions.
+- Passed: `run_experiment.py` evaluates both models and correctly updates `summary.md`.
+
+### Bugs or Blockers Encountered
+- None.
+
+### Fixes or Workarounds Applied
+- None.
+
+### Architectural Discrepancies
+- None.
+
+### Remaining Risks
+- The marginal action distribution only counts executed actions; SB3's exploratory actions during training are logged to WandB but are not part of the final evaluation report.
+
+### Recommended Next Action
+- Conduct the 500k RL training run on the Ubuntu workstation using `run_experiment.py`.

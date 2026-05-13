@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 from scripts import train_parkour
@@ -36,19 +37,64 @@ def main() -> None:
     layout = train_parkour.main(train_args)
 
     print("\n=== Phase 2: Evaluation ===")
-    eval_args = [
-        "--experiment", str(layout.path),
-        "--model-choice", "best",
-        "--episodes", str(args.eval_episodes),
-        "--seed", str(args.seed + 1000),
-        "--max-episode-steps", str(args.max_episode_steps),
-    ]
-    if args.save_replays:
-        eval_args.append("--save-replays")
-    evaluate_model.main(eval_args)
+    
+    def run_eval(model_choice: str):
+        eval_args = [
+            "--experiment", str(layout.path),
+            "--model-choice", model_choice,
+            "--episodes", str(args.eval_episodes),
+            "--seed", str(args.seed + 1000),
+            "--max-episode-steps", str(args.max_episode_steps),
+        ]
+        if args.save_replays:
+            eval_args.append("--save-replays")
+        print(f"\n--- Evaluating {model_choice} model ---")
+        evaluate_model.main(eval_args)
+
+    run_eval("best")
+    run_eval("latest")
+
+    print("\n=== Phase 3: Updating Summary ===")
+    summary_path = layout.path / "summary.md"
+    try:
+        best_report_path = layout.report_path("best")
+        latest_report_path = layout.report_path("latest")
+        
+        with open(best_report_path, "r") as f:
+            best_report = json.load(f)
+        with open(latest_report_path, "r") as f:
+            latest_report = json.load(f)
+
+        summary_content = ""
+        if summary_path.exists():
+            with open(summary_path, "r") as f:
+                summary_content = f.read()
+
+        summary_content += f"\n\n## Evaluation Results ({args.eval_episodes} episodes)\n\n"
+        summary_content += "| Metric | Best Model | Latest Model |\n"
+        summary_content += "|---|---|---|\n"
+        
+        metrics = ["reward", "length", "heli_kills", "player_damage", "final_score"]
+        for m in metrics:
+            best_val = best_report["metrics"][m]["mean"]
+            latest_val = latest_report["metrics"][m]["mean"]
+            summary_content += f"| Mean {m.replace('_', ' ').title()} | {best_val:.2f} | {latest_val:.2f} |\n"
+            
+        rates = ["hit_rate", "death_rate", "timeout_rate"]
+        for r in rates:
+            best_val = best_report["rates"].get(r, 0.0)
+            latest_val = latest_report["rates"].get(r, 0.0)
+            summary_content += f"| {r.replace('_', ' ').title()} | {best_val:.2%} | {latest_val:.2%} |\n"
+
+        with open(summary_path, "w") as f:
+            f.write(summary_content)
+        print(f"Updated {summary_path}")
+
+    except Exception as e:
+        print(f"Warning: Could not update summary.md: {e}")
 
     if args.wandb == "on":
-        print("\n=== Phase 3: WandB Upload ===")
+        print("\n=== Phase 4: WandB Upload ===")
         import wandb
         print(f"Uploading experiment artifacts to wandb...")
         artifact = wandb.Artifact(

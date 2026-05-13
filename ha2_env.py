@@ -199,7 +199,9 @@ class HeliAttack2Env(gym.Env):
         self.cgun = 0
         self.gun_reloadtime = math.inf
         self.gun_bullets = math.inf
-        self.gun_shots = 0
+        self.player_shot_attempts = 0
+        self.player_bullets_spawned = 0
+        self.player_shots_spawn_blocked = 0
         self.gun_rotation = 0.0
         self.aim_rotation = 0.0
         self.bullets: list[dict[str, Any]] = []
@@ -373,7 +375,9 @@ class HeliAttack2Env(gym.Env):
         self.cgun = 0
         self.gun_reloadtime = math.inf
         self.gun_bullets = math.inf
-        self.gun_shots = 0
+        self.player_shot_attempts = 0
+        self.player_bullets_spawned = 0
+        self.player_shots_spawn_blocked = 0
         self.gun_rotation = 0.0
         self.aim_rotation = 0.0
         self.bullets = []
@@ -1080,7 +1084,7 @@ class HeliAttack2Env(gym.Env):
             self.gun_reloadtime += 1
 
         if fire_action and self.gun_reloadtime >= MACHINEGUN_RELOADTIME and self.gun_bullets > 0:
-            self.gun_shots += 1
+            self.player_shot_attempts += 1
             self.gun_reloadtime = 0
             if not math.isinf(self.gun_bullets):
                 self.gun_bullets -= 1
@@ -1095,8 +1099,10 @@ class HeliAttack2Env(gym.Env):
                     MACHINEGUN_DAMAGE,
                 )
                 event["spawned_bullet_id"] = bullet_id
+                self.player_bullets_spawned += 1
             else:
                 event["spawn_blocked"] = True
+                self.player_shots_spawn_blocked += 1
             event["fired"] = True
 
         return event
@@ -1629,7 +1635,7 @@ class HeliAttack2Env(gym.Env):
             f"pos=({self._x:.2f},{self._y:.2f}) speed=({self.xspeed:.2f},{self.yspeed:.2f})",
             f"jump={self.jump}/{self.jump2} duck={self.duck} hjump={self.hjump} hyper={self.hyperjump}",
             f"action={self.last_action} camera=({self.last_camera[0]:.1f},{self.last_camera[1]:.1f})",
-            f"gun=MachineGun rot={self.gun_rotation:.1f} reload={self._state_value(self.gun_reloadtime)} shots={self.gun_shots} bullets={len(self.bullets)}",
+            f"gun=MachineGun rot={self.gun_rotation:.1f} reload={self._state_value(self.gun_reloadtime)} shots={self.player_shot_attempts}/{self.player_bullets_spawned} bullets={len(self.bullets)}",
             f"combat=health:{self.health} last_damage:{self.last_player_damage_amount}@{self.last_player_damage_tick} score:{self.score} hits:{self.hits} helis:{self.helis}",
             f"enemies={len(self.enemies)} hp=[{enemy_healths}] kills={self.rthelis} pending_heli={self.pending_default_heli}",
             f"ebullets={len(self.enemy_bullets)} enemy_event={self.last_enemy_event}",
@@ -1795,7 +1801,9 @@ class HeliAttack2Env(gym.Env):
                 "name": "MachineGun",
                 "reloadtime": self._state_value(self.gun_reloadtime),
                 "bullets": self._state_value(self.gun_bullets),
-                "shots": int(self.gun_shots),
+                "player_shot_attempts": int(self.player_shot_attempts),
+                "player_bullets_spawned": int(self.player_bullets_spawned),
+                "player_shots_spawn_blocked": int(self.player_shots_spawn_blocked),
                 "rotation": round(float(self.gun_rotation), 8),
                 "aim_rotation": round(float(self.aim_rotation), 8),
                 "total_bullets_spawned": int(self.total_bullets_spawned),
@@ -1860,7 +1868,9 @@ class HeliAttack2Env(gym.Env):
         self.gun_reloadtime = math.inf if reloadtime == "Infinity" else float(reloadtime)
         bullets = gun.get("bullets", "Infinity")
         self.gun_bullets = math.inf if bullets == "Infinity" else float(bullets)
-        self.gun_shots = int(gun.get("shots", 0))
+        self.player_shot_attempts = int(gun.get("player_shot_attempts", 0))
+        self.player_bullets_spawned = int(gun.get("player_bullets_spawned", 0))
+        self.player_shots_spawn_blocked = int(gun.get("player_shots_spawn_blocked", 0))
         self.gun_rotation = float(gun.get("rotation", 0.0))
         self.aim_rotation = float(gun.get("aim_rotation", 0.0))
         self.total_bullets_spawned = int(gun.get("total_bullets_spawned", 0))
@@ -1929,7 +1939,9 @@ class HeliAttack2Env(gym.Env):
             info["total_player_damage"] = int(self.total_player_damage)
             info["heli_kills"] = int(self.helis)
             info["heli_hits"] = int(self.hits)
-            info["player_bullets_fired"] = int(self.gun_shots)
+            info["player_shot_attempts"] = int(self.player_shot_attempts)
+            info["player_bullets_spawned"] = int(self.player_bullets_spawned)
+            info["player_shots_spawn_blocked"] = int(self.player_shots_spawn_blocked)
             info["enemy_bullet_hits"] = int(self.enemy_bullet_hits)
             info["score"] = int(self.score)
         return info
