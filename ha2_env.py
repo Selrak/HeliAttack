@@ -395,6 +395,8 @@ class HeliAttack2Env(gym.Env):
         self.default_heli_spawned = False
         self.last_player_damage_tick = None
         self.last_player_damage_amount = 0
+        self.total_player_damage = 0
+        self.total_player_damage = 0
         self.world_x = 0.0
         self.world_y = 0.0
         self.worldpos = [0, 0]
@@ -1117,6 +1119,7 @@ class HeliAttack2Env(gym.Env):
         enemy_event["spawned_enemy_ids"].extend(enemy_update_event["spawned_enemy_ids"])
         enemy_event["killed_enemy_ids"].extend(enemy_update_event["killed_enemy_ids"])
         enemy_event["player_damage"] += int(enemy_update_event["player_damage"])
+        self.total_player_damage += int(enemy_event["player_damage"])
 
         if move_action == 0:
             self.facing_right = False
@@ -1923,6 +1926,12 @@ class HeliAttack2Env(gym.Env):
                 else None
             )
             info["episode_step_count"] = int(self.episode_step_count)
+            info["total_player_damage"] = int(self.total_player_damage)
+            info["heli_kills"] = int(self.helis)
+            info["heli_hits"] = int(self.hits)
+            info["player_bullets_fired"] = int(self.gun_shots)
+            info["enemy_bullet_hits"] = int(self.enemy_bullet_hits)
+            info["score"] = int(self.score)
         return info
 
     def close(self) -> None:

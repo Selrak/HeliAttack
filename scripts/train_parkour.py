@@ -33,8 +33,7 @@ def _load_sb3():
         ) from exc
     return PPO, CheckpointCallback, EvalCallback, Monitor, DummyVecEnv
 
-
-def main() -> None:
+def main(args_list: list[str] | None = None) -> ExperimentLayout:
     parser = argparse.ArgumentParser(description="Minimal HA2 parkour PPO training.")
     parser.add_argument("--total-timesteps", type=int, default=10_000)
     parser.add_argument("--seed", type=int, default=0)
@@ -48,8 +47,9 @@ def main() -> None:
     parser.add_argument("--experiment-dir", type=Path, default=None)
     parser.add_argument("--experiment-name", type=str, default=None)
     parser.add_argument("--resume-from", type=Path, default=None)
+    parser.add_argument("--no-wandb-finish", action="store_true", help="Skip artifact upload and wandb finish (for orchestration).")
     parser.add_argument("--mirror-root-models", action="store_true")
-    args = parser.parse_args()
+    args = parser.parse_args(args_list)
 
     PPO, CheckpointCallback, EvalCallback, Monitor, DummyVecEnv = _load_sb3()
     repo_root = Path(__file__).resolve().parents[1]
@@ -188,7 +188,7 @@ def main() -> None:
     print(f"Saved latest model to {layout.models_dir / 'latest.zip'}")
     print(f"Experiment directory: {layout.path}")
 
-    if args.wandb == "on":
+    if args.wandb == "on" and not args.no_wandb_finish:
         import wandb
 
         print(f"Uploading experiment artifacts to wandb...")
@@ -208,6 +208,7 @@ def main() -> None:
         wandb.log_artifact(artifact)
         wandb.finish()
 
+    return layout
 
 if __name__ == "__main__":
     main()

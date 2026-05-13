@@ -27,7 +27,7 @@ def _load_ppo():
 DEFAULT_OUTPUT = "__default__"
 
 
-def main() -> None:
+def main(args_list: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Watch a trained HA2 model in GUI mode.")
     parser.add_argument("--model", type=Path, default=None)
     parser.add_argument("--experiment", type=Path, default=None)
@@ -40,7 +40,7 @@ def main() -> None:
     parser.add_argument("--record-gif", nargs="?", const=DEFAULT_OUTPUT, default=None, type=str)
     parser.add_argument("--training-profile", choices=["legacy", "combat_v1"], default="combat_v1")
     parser.add_argument("--max-episode-steps", type=int, default=1800)
-    args = parser.parse_args()
+    args = parser.parse_args(args_list)
 
     PPO = _load_ppo()
     effective_model_choice = "path" if args.model is not None else args.model_choice

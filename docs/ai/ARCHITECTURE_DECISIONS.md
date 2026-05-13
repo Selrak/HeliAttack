@@ -47,6 +47,16 @@ This is an append-only decision log. Future ChatGPT/Codex decisions should be ad
 - Rationale: Existing replay/parity traces need stable legacy observations and rewards, while RL needs a bounded fixed-size vector observation, combat reward, and episode endings.
 - Consequences: Models are profile-specific; `combat_v1` replays record profile metadata, and old replays remain legacy by default.
 
+## 2026-05-13 - WandB Artifacts for Dual-Computer Sync
+- Decision: Use WandB Artifacts as the primary mechanism for synchronizing experiment directories (including replays) across machines.
+- Rationale: Provides a central "Source of Truth" tied to the training dashboard, ensures experiment folders remain identical across machines, and avoids the "scattered" feeling of generic cloud drives.
+- Consequences: `train_parkour.py` now uploads full experiment folders to WandB; `sync_experiment.py` is required to download them on other machines. Local `.env` support added for per-folder WandB identity.
+
+## 2026-05-14 - run_experiment.py as Canonical Entry Point
+- Decision: Use `scripts.run_experiment` as the canonical local entry point for training and evaluation.
+- Rationale: Ensures that every training run is immediately evaluated using a standard set of metrics and the resulting artifacts (models, logs, reports, replays) are packaged and uploaded together, reducing manual orchestration errors.
+- Consequences: `train_parkour.py` and `evaluate_model.py` are now primarily called as sub-modules via `args_list` during standard workflows, though they can still be run standalone.
+
 ## 2026-05-05 - Experiment Directories as RL Artifact Boundary
 - Decision: Make `experiments/<run>/` the default unit for training, evaluation, replay, report, checkpoint, and TensorBoard outputs.
 - Rationale: Root-level `models/`, `reports/`, and `replays/` outputs were easy to overwrite or mix across runs; self-contained experiment folders make runs reproducible and easier to inspect.

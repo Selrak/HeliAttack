@@ -361,3 +361,91 @@ Added a GUI fast-forward toggle for replay and model-watch viewers.
 
 ### Suggested Next Step
 - Manually test `F` in `python -m scripts.play_replay ...` and `python -m scripts.watch_model ...`.
+
+## 2026-05-13 23:55 Europe/Paris - WandB Experiment Sync System
+
+### Task Attempted
+Implemented a robust experiment synchronization system using WandB Artifacts to support dual-computer contribution.
+
+### Files Changed or Created
+- Created `scripts/sync_experiment.py`.
+- Updated `scripts/train_parkour.py`.
+- Updated `.gitignore`.
+- Updated `docs/ai/ARCHITECTURE_DECISIONS.md`, `docs/ai/CURRENT_STATE.md`, and `docs/ai/CODEX_SESSION_LOG.md`.
+
+### Repository Facts Discovered
+- The `wandb` library (v0.26.1) is strict about the 40-character length of "Classic" API keys when using `wandb login` or environment variables.
+- New-style Personal Access Tokens (`wandb_v1_...`) are supported but required manual `wandb login --relogin` to be accepted in this environment.
+- Local configuration can be managed via `.env` using `python-dotenv`, allowing per-folder WandB identities (entity/project).
+
+### Commands Run
+- `pip install python-dotenv`
+- `python -m scripts.train_parkour --total-timesteps 100 --n-envs 1 --wandb on --experiment-name "sync_final_test"`
+- `python -m scripts.sync_experiment "sync_final_test" --experiments-root "experiments_sync_test"`
+- `wandb login --relogin`
+
+### Validation Result
+- Passed: `py_compile` for `scripts/train_parkour.py` and `scripts/sync_experiment.py`.
+- Passed: Full training run with `--wandb on` successfully uploaded experiment artifacts (models, replays, reports, config) to WandB.
+- Passed: `scripts.sync_experiment` successfully downloaded the experiment artifact, recreating the identical directory structure locally.
+
+### Bugs or Blockers Encountered
+- `wandb.errors.errors.AuthenticationError`: API key length validation (40+ characters) blocked `.env`-based login for new-style tokens initially.
+
+### Fixes or Workarounds Applied
+- Added `python-dotenv` support to scripts to load local `.env` configuration.
+- Simplified `wandb.init` to allow global/environment defaults while still supporting `.env` overrides.
+- Recommended manual `wandb login --relogin` for tokens that don't satisfy the library's strict environment variable length checks.
+
+### Architectural Discrepancies
+- None; the system aligns with the "Experiment Directory" decision from 2026-05-05.
+
+### Remaining Risks
+- Users must remember to run `sync_experiment.py` on the second machine; there is no "auto-pull" on startup.
+- `.env` files must be manually synchronized or recreated (they are git-ignored).
+
+### Suggested Next Step
+- Start a real training run with `--wandb on` and verify the dashboard and artifacts are accessible on both machines.
+
+## 2026-05-14 00:30 Europe/Paris - RL Training Workflow and Diagnostics
+
+### Task Attempted
+Set up a robust first real HA2 RL training workflow around the existing `combat_v1` environment by implementing a bounded training orchestration and diagnostics layer.
+
+### Files Changed or Created
+- Created `scripts/run_experiment.py`.
+- Updated `ha2_env.py` to add new combat metrics counters (`total_player_damage`, `heli_kills`, etc.) to the `info` dict.
+- Updated `scripts/train_parkour.py` to accept `args_list`, return `ExperimentLayout`, and support `--no-wandb-finish`.
+- Updated `scripts/evaluate_model.py` to accept `args_list` and output aggregate combat diagnostics (min, max, mean, sum) to the JSON report.
+- Updated `scripts/watch_model.py` to accept `args_list`.
+- Updated `docs/ai/CURRENT_STATE.md`, `docs/ai/VALIDATION.md`, and `docs/ai/CODEX_SESSION_LOG.md`.
+
+### Repository Facts Discovered
+- `train_parkour.py`, `evaluate_model.py`, and `watch_model.py` were previously heavily reliant on direct `sys.argv` parsing, requiring minor refactoring to accept `args_list` for clean orchestration.
+
+### Commands Run
+- `python -m scripts.run_experiment --total-timesteps 100 --n-envs 1 --eval-episodes 1` (Smoke tests)
+- `python -m scripts.run_experiment --total-timesteps 1000 --n-envs 1 --wandb off --eval-episodes 1 --save-replays` (Validation test)
+
+### Validation Result
+- Passed: `run_experiment.py` orchestrates training and evaluation seamlessly in one process.
+- Passed: `ha2_env.py` successfully returns new combat metrics in the `info` dict.
+- Passed: Evaluation reports now include detailed min/max/mean/sum aggregates and termination reason counts.
+- Passed: Full validation run created a complete experiment directory with models, config, summaries, reports, and replays.
+
+### Bugs or Blockers Encountered
+- `train_parkour.py` had redundant `parser.parse_args()` calls which caused parsing errors when arguments were passed via `args_list`.
+- WandB artifact upload had to be moved/delayed to `run_experiment.py` (via `--no-wandb-finish`) so that the evaluation artifacts (reports and replays) would be included in the upload.
+
+### Fixes or Workarounds Applied
+- Removed redundant arg parsing in `train_parkour.py`.
+- Added the `--no-wandb-finish` flag to `train_parkour.py` and moved the artifact upload logic to the end of `run_experiment.py`.
+
+### Architectural Discrepancies
+- None; the system aligns with the established "Experiment Directory" strategy and enhances it with orchestration.
+
+### Remaining Risks
+- The 1000-step smoke run does not guarantee the model will learn; a longer real training run is still needed.
+
+### Recommended Next Action
+- Start a real training run on a more powerful machine (e.g., Ubuntu workstation) using `scripts.run_experiment` and monitor the WandB dashboard to evaluate the learning behavior.

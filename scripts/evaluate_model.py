@@ -29,7 +29,7 @@ def default_model_path() -> Path:
     return best if best.exists() else latest
 
 
-def main() -> None:
+def main(args_list: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Evaluate a trained HA2 model.")
     parser.add_argument("--model", type=Path, default=None)
     parser.add_argument("--experiment", type=Path, default=None)
@@ -43,7 +43,7 @@ def main() -> None:
     parser.add_argument("--replay-prefix", type=str, default=None)
     parser.add_argument("--training-profile", choices=["legacy", "combat_v1"], default="combat_v1")
     parser.add_argument("--max-episode-steps", type=int, default=1800)
-    args = parser.parse_args()
+    args = parser.parse_args(args_list)
 
     PPO = _load_ppo()
     effective_model_choice = "path" if args.model is not None else args.model_choice
@@ -156,6 +156,11 @@ def main() -> None:
                 "max_x": max_x,
                 "final_score": final_score,
                 "max_score": max_score,
+                "total_player_damage": info.get("total_player_damage", 0),
+                "heli_kills": info.get("heli_kills", 0),
+                "heli_hits": info.get("heli_hits", 0),
+                "player_bullets_fired": info.get("player_bullets_fired", 0),
+                "enemy_bullet_hits": info.get("enemy_bullet_hits", 0),
                 "action_frequencies": {"|".join(map(str, k)): v for k, v in actions.items()},
             }
         )
@@ -172,6 +177,19 @@ def main() -> None:
         "episodes": args.episodes,
         "mean_reward": mean_reward,
         "mean_episode_length": mean_length,
+        "total_heli_kills": sum(row["heli_kills"] for row in stats),
+        "mean_heli_kills": sum(row["heli_kills"] for row in stats) / len(stats) if stats else 0.0,
+        "total_heli_hits": sum(row["heli_hits"] for row in stats),
+        "mean_heli_hits": sum(row["heli_hits"] for row in stats) / len(stats) if stats else 0.0,
+        "total_player_bullets_fired": sum(row["player_bullets_fired"] for row in stats),
+        "mean_player_bullets_fired": sum(row["player_bullets_fired"] for row in stats) / len(stats) if stats else 0.0,
+        "total_player_damage": sum(row["total_player_damage"] for row in stats),
+        "mean_player_damage": sum(row["total_player_damage"] for row in stats) / len(stats) if stats else 0.0,
+        "total_enemy_bullet_hits": sum(row["enemy_bullet_hits"] for row in stats),
+        "mean_enemy_bullet_hits": sum(row["enemy_bullet_hits"] for row in stats) / len(stats) if stats else 0.0,
+        "total_deaths": sum(row["deaths"] for row in stats),
+        "total_falls": sum(row["falls"] for row in stats),
+        "total_timeouts": sum(1 for row in stats if row["termination_reason"] == "time_limit"),
         "termination_reason_counts": dict(termination_reason_counts),
         "episode_rewards": [row["reward"] for row in stats],
         "episode_lengths": [row["length"] for row in stats],
