@@ -23,6 +23,10 @@ Last updated: 2026-05-05 Europe/Paris
 - `scripts/export_ffdec_reference.ps1` can export broad FFDEC reference data from a SWF and auto-detects `C:\Program Files (x86)\FFDec\ffdec-cli.exe`.
 - `training_profile="combat_v1"` is available as an opt-in RL interface: 37-field bounded float32 vector observation, combat-aware reward, player-death/fall termination, and max-step truncation.
 - `scripts.train_parkour`, `scripts.evaluate_model`, and `scripts.watch_model` default to `combat_v1` with `max_episode_steps=1800`.
+- Experiments are now the default unit of RL artifact storage: `scripts.train_parkour` creates `experiments/ha2_000001_YYYYMMDD_HHMM_combat-v1_1k/`-style runs with `config.json`, `git_info.txt`, `summary.md`, `models/`, `reports/`, `replays/`, and `tensorboard/`.
+- `scripts.evaluate_model` can resolve `best` and `latest` model files from an experiment and writes eval reports/replays inside that experiment by default.
+- `scripts.watch_model` can resolve experiment-scoped `best` and `latest` models and can auto-name optional replay/GIF outputs under the experiment.
+- `scripts.play_replay` and `scripts.watch_model` now support an `F` fast-forward toggle for faster GUI inspection.
 - Charles manually exercised GUI play/replay checks after the scripted trace phase and reported they looked OK.
 
 ## What Is Unknown
@@ -32,11 +36,13 @@ Last updated: 2026-05-05 Europe/Paris
 - GIF recording still needs manual validation.
 - MachineGun GUI firing/replay rendering still needs Charles manual feel/parity checks.
 - New Heli gun/enemy-bullet GUI feel still needs Charles manual checks.
+- `scripts.watch_model` manual GUI validation was not run during the experiment-directory pass.
+- Fast-forward GUI behavior has not yet been manually evaluated for feel or frame pacing.
 
 ## Current Architecture
 - `ha2_env.py` contains the main runtime architecture: environment state, player physics, default MachineGun/bullets, one default Heli enemy target, collision checks against `const.FULL_MAP_DATA`, rendering, and state/hash debug hooks.
 - `ha2_replay.py` provides deterministic JSONL replay writing/loading/verification.
-- `scripts/` contains manual play, replay, screenshot, and minimal SB3 pipeline entry points.
+- `scripts/` contains manual play, replay, screenshot, and SB3 pipeline entry points plus `scripts/experiment_utils.py` for experiment directory/path resolution.
 - `tests/` contains pytest smoke tests.
 - `ha2_constants.py` is generated static data for map and core movement constants.
 - `extract_ha2_data.py` is the data extraction bridge from decompiled AS to generated Python constants.
@@ -46,6 +52,7 @@ Last updated: 2026-05-05 Europe/Paris
 ## Migration or Refactoring State
 - The project appears to be in an early HA2 foundation phase.
 - Minimal replay/test/training scaffolding was added; serious training is still deferred.
+- The RL artifact layout has moved from root-level `models/` and `reports/` outputs to experiment-scoped directories by default; root-level compatibility remains only for ad hoc/manual use.
 - No HA3 implementation was found during bootstrap inspection.
 
 ## Current Risks and Unclear Points

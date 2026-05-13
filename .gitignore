@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 venv/
 runs/
+experiments/
 models/checkpoints/
 models/*.zip
 replays/

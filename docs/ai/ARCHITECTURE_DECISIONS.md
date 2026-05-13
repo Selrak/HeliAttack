@@ -46,3 +46,8 @@ This is an append-only decision log. Future ChatGPT/Codex decisions should be ad
 - Decision: Keep legacy env behavior as the default and add `training_profile="combat_v1"` for SB3 training/evaluation/watch.
 - Rationale: Existing replay/parity traces need stable legacy observations and rewards, while RL needs a bounded fixed-size vector observation, combat reward, and episode endings.
 - Consequences: Models are profile-specific; `combat_v1` replays record profile metadata, and old replays remain legacy by default.
+
+## 2026-05-05 - Experiment Directories as RL Artifact Boundary
+- Decision: Make `experiments/<run>/` the default unit for training, evaluation, replay, report, checkpoint, and TensorBoard outputs.
+- Rationale: Root-level `models/`, `reports/`, and `replays/` outputs were easy to overwrite or mix across runs; self-contained experiment folders make runs reproducible and easier to inspect.
+- Consequences: `train_parkour` now creates a new experiment directory by default, `evaluate_model` and `watch_model` prefer experiment-scoped paths, and repeat evaluation on an existing report/replay file fails clearly rather than clobbering it. Root-level compatibility remains only for ad hoc/manual use.

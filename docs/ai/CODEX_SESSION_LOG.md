@@ -289,3 +289,75 @@ Have ChatGPT webchat produce a concrete implementation phase and paste it into `
 - Bugs/workarounds: replay headers now store optional training profile/max steps so combat-profile replays verify while old replays remain legacy.
 - Remaining risks: reward is a first-pass training signal, PPO quality is not evaluated, and AS parity is unaffected/unproven by this RL interface.
 - Next: review short SB3 smoke behavior and decide whether to tune reward/observations or add curriculum tasks.
+
+## 2026-05-05 17:30 +02:00 - Experiment Directory System
+
+### Task Attempted
+Implemented the local experiment-directory system for HA2 RL runs.
+
+### Files Changed or Created
+- Added `scripts/experiment_utils.py`.
+- Updated `scripts/train_parkour.py`, `scripts/evaluate_model.py`, `scripts/watch_model.py`, `.gitignore`, `docs/ai/CURRENT_STATE.md`, `docs/ai/ARCHITECTURE_DECISIONS.md`, `docs/ai/VALIDATION.md`, and `docs/ai/CODEX_SESSION_LOG.md`.
+- Added `tests/test_experiment_outputs.py`.
+
+### Repository Facts Discovered
+- `train_parkour` now creates unique experiment folders under `experiments/` by default.
+- The experiment layout is self-contained: `config.json`, `git_info.txt`, `summary.md`, `models/`, `reports/`, `replays/`, and `tensorboard/`.
+- `evaluate_model` resolves `best`/`latest` from an experiment and writes reports/replays inside that experiment by default.
+- `watch_model` can resolve experiment-scoped `best`/`latest` models and can auto-name replay/GIF outputs.
+- `scripts.run_experiment.py` was deferred.
+
+### Command Examples
+- `python -m scripts.train_parkour --total-timesteps 1000 --n-envs 1 --wandb off`
+- `python -m scripts.evaluate_model --experiment experiments/<created_experiment> --model-choice latest --episodes 1 --save-replays`
+- `python -m scripts.evaluate_model --experiment experiments/<created_experiment> --model-choice best --episodes 1 --save-replays`
+- `python -m scripts.watch_model --experiment experiments/<created_experiment> --model-choice latest`
+
+### Validation Result
+- Passed: `py_compile` for `scripts/experiment_utils.py`, `scripts/train_parkour.py`, `scripts/evaluate_model.py`, `scripts/watch_model.py`.
+- Passed: `pytest -q` (`50 passed`).
+- Passed: `record_random_replay --steps 300`, `verify_replay replays/smoke.jsonl`.
+- Passed: `record_scripted_trace --scenario all` and all key replay verifications.
+- Passed: `train_parkour --total-timesteps 1000 --n-envs 1 --wandb off`.
+- Passed: `evaluate_model --experiment experiments/ha2_000001_20260505_1729_combat-v1_1k --model-choice latest --episodes 1 --save-replays`.
+- Passed: `evaluate_model --experiment experiments/ha2_000001_20260505_1729_combat-v1_1k --model-choice best --episodes 1 --save-replays`.
+- Passed: `verify_replay` on `experiments/ha2_000001_20260505_1729_combat-v1_1k/replays/latest_eval_ep0.jsonl` and `best_eval_ep0.jsonl`.
+- Manual GUI watch was not run.
+
+### Bugs or Blockers Encountered
+- None in the implementation path.
+
+### Fixes or Workarounds Applied
+- Evaluation and replay outputs fail clearly if the target file already exists instead of overwriting silently.
+- `best_model.zip` is still copied to `best.zip` inside the experiment for compatibility.
+
+### Architectural Discrepancies
+- Root-level `models/` and `reports/` remain only as legacy/ad hoc compatibility, but the preferred path is now experiment-scoped outputs.
+
+### Remaining Risks
+- `watch_model` still needs manual GUI validation.
+- `run_experiment.py` was deferred, so train/eval remains a two-step smoke path.
+
+### Suggested Next Step
+- Manually run `python -m scripts.watch_model --experiment experiments/<created_experiment> --model-choice latest`, then decide whether to add `run_experiment.py`.
+
+## 2026-05-05 17:45 +02:00 - Fast-Forward GUI Toggle
+
+### Task Attempted
+Added a GUI fast-forward toggle for replay and model-watch viewers.
+
+### Files Changed or Created
+- Updated `scripts/play_replay.py`, `scripts/watch_model.py`, `docs/ai/CURRENT_STATE.md`, and `docs/ai/CODEX_SESSION_LOG.md`.
+
+### Behavior
+- `F` toggles fast-forward in both `play_replay` and `watch_model`.
+- Fast-forward multiplies the target FPS by the configured multiplier instead of changing replay/model semantics.
+
+### Validation Result
+- Pending compile/pytest at the time of this log entry; no manual GUI validation yet.
+
+### Remaining Risks
+- Fast-forward feel and exact frame pacing still need manual GUI testing.
+
+### Suggested Next Step
+- Manually test `F` in `python -m scripts.play_replay ...` and `python -m scripts.watch_model ...`.
