@@ -171,7 +171,7 @@ def test_machinegun_deterministic_hold_fire():
     second_state, second_hash = run_once()
 
     assert first_hash == second_hash
-    assert first_state["gun"]["shots"] == 12
+    assert first_state["gun"]["player_shot_attempts"] == 12
     assert first_state["gun"]["total_bullets_spawned"] == 12
 
 

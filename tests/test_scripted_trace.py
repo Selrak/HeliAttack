@@ -62,7 +62,7 @@ def test_scripted_fire_trace_summary(tmp_path):
 
     summary = result.summary_path.read_text(encoding="utf-8")
     assert "scenario=fire_right_60" in summary
-    assert "gun_shots=12" in summary
+    assert "player_shot_attempts=12" in summary
     assert "total_bullets_spawned=12" in summary
     assert "first_bullet_initial=" in summary
 
