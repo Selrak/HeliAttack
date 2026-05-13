@@ -2,8 +2,15 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
+import os
 from pathlib import Path
 import shutil
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 from ha2_env import HeliAttack2Env
 from scripts.experiment_utils import (
@@ -108,12 +115,27 @@ def main() -> None:
     ]
 
     if args.wandb == "on":
+        # Set API key in environment BEFORE importing/initializing wandb
+        api_key = os.environ.get("WANDB_API_KEY")
+        if api_key:
+            os.environ["WANDB_API_KEY"] = api_key
+            
         try:
             import wandb
             from wandb.integration.sb3 import WandbCallback
         except ModuleNotFoundError as exc:
             raise SystemExit("wandb is not installed; rerun with --wandb off.") from exc
-        wandb.init(project="heliattack", dir=str(layout.path / "wandb"), config=config, sync_tensorboard=True)
+        
+        entity = os.environ.get("WANDB_ENTITY")
+        project = os.environ.get("WANDB_PROJECT", "heliattack")
+        
+        wandb.init(
+            project=project,
+            entity=entity,
+            dir=str(layout.path / "wandb"),
+            config=config,
+            sync_tensorboard=True
+        )
         callbacks.append(WandbCallback(verbose=1))
 
     if args.resume_from is not None:
@@ -165,6 +187,26 @@ def main() -> None:
     eval_env.close()
     print(f"Saved latest model to {layout.models_dir / 'latest.zip'}")
     print(f"Experiment directory: {layout.path}")
+
+    if args.wandb == "on":
+        import wandb
+
+        print(f"Uploading experiment artifacts to wandb...")
+        artifact = wandb.Artifact(
+            name=layout.path.name,
+            type="experiment",
+            metadata=config,
+        )
+        # Upload all files in the experiment directory except the wandb/ folder itself
+        for item in layout.path.iterdir():
+            if item.name == "wandb":
+                continue
+            if item.is_dir():
+                artifact.add_dir(str(item), name=item.name)
+            else:
+                artifact.add_file(str(item), name=item.name)
+        wandb.log_artifact(artifact)
+        wandb.finish()
 
 
 if __name__ == "__main__":
