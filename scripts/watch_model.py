@@ -1,19 +1,20 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
-import numpy as np
-import pygame
-
-from ha2_env import HeliAttack2Env
-from ha2_replay import JsonlReplayWriter
 from scripts.experiment_utils import (
     ExperimentLayout,
     resolve_model_path,
     unique_timestamped_path,
 )
-from scripts.evaluate_model import default_model_path
+
+
+def default_model_path() -> Path:
+    best = Path("models/best.zip")
+    latest = Path("models/latest.zip")
+    return best if best.exists() else latest
 
 
 def _load_ppo():
@@ -42,7 +43,6 @@ def main(args_list: list[str] | None = None) -> None:
     parser.add_argument("--max-episode-steps", type=int, default=1800)
     args = parser.parse_args(args_list)
 
-    PPO = _load_ppo()
     effective_model_choice = "path" if args.model is not None else args.model_choice
     layout = None
     if args.experiment is not None:
@@ -60,7 +60,14 @@ def main(args_list: list[str] | None = None) -> None:
     if not model_path.exists():
         raise SystemExit(f"Model not found: {model_path}")
 
+    PPO = _load_ppo()
     model = PPO.load(model_path)
+    os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
+    import pygame
+
+    from ha2_env import HeliAttack2Env
+    from ha2_replay import JsonlReplayWriter
+
     env = HeliAttack2Env(
         render_mode="human",
         auto_render=False,
@@ -132,6 +139,8 @@ def main(args_list: list[str] | None = None) -> None:
             )
 
             if gif_path is not None and env.window is not None:
+                import numpy as np
+
                 frame3d = pygame.surfarray.array3d(env.window)
                 frames.append(np.transpose(frame3d, (1, 0, 2)))
 

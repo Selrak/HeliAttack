@@ -10,6 +10,8 @@ from typing import Any
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
+
+os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 import pygame
 
 import ha2_constants as const
@@ -277,7 +279,7 @@ class HeliAttack2Env(gym.Env):
             "player_damage": 0,
         }
 
-    def _ensure_pygame_ready(self) -> None:
+    def _ensure_pygame_ready(self, display_size: tuple[int, int] | None = None) -> None:
         if self.render_mode == "rgb_array":
             os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
@@ -286,7 +288,7 @@ class HeliAttack2Env(gym.Env):
 
         if self.render_mode == "human":
             if self.window is None:
-                self.window = pygame.display.set_mode(self.window_size)
+                self.window = pygame.display.set_mode(display_size or self.window_size)
                 pygame.display.set_caption("HA2 Simulator")
                 self.clock = pygame.time.Clock()
         elif self.render_mode == "rgb_array" and pygame.display.get_surface() is None:
@@ -1389,7 +1391,12 @@ class HeliAttack2Env(gym.Env):
         if self.render_mode is None:
             return None
 
-        self._ensure_pygame_ready()
+        display_size = (
+            (self.window_size[0] + DEBUG_PANEL_WIDTH, self.window_size[1])
+            if debug_overlay
+            else self.window_size
+        )
+        self._ensure_pygame_ready(display_size=display_size)
         if not self.images:
             self._load_images()
 
@@ -1485,9 +1492,7 @@ class HeliAttack2Env(gym.Env):
 
         display_canvas = canvas
         if debug_overlay:
-            display_canvas = pygame.Surface(
-                (self.window_size[0] + DEBUG_PANEL_WIDTH, self.window_size[1])
-            )
+            display_canvas = pygame.Surface(display_size)
             display_canvas.fill((12, 14, 16))
             display_canvas.blit(canvas, (0, 0))
             self._draw_debug_panel(display_canvas, debug_lines or [], self.window_size[0])
