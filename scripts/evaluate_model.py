@@ -162,6 +162,12 @@ def main(args_list: list[str] | None = None) -> None:
         if not experiment_path.exists():
             raise SystemExit(f"Experiment not found: {experiment_path}")
         layout = ExperimentLayout(experiment_path.parent, experiment_path)
+        if layout.config_path.exists():
+            import json
+            with open(layout.config_path, "r") as f:
+                config = json.load(f)
+                if "training_profile" in config:
+                    args.training_profile = config["training_profile"]
 
     model_path = resolve_model_path(
         model=args.model,
