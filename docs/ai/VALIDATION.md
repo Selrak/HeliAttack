@@ -20,6 +20,9 @@ python -m scripts.record_scripted_trace --scenario kill_heli_respawn_600
 python -m scripts.verify_replay reports/parity_traces/kill_heli_respawn_600.jsonl
 python -c "from stable_baselines3.common.env_checker import check_env; from ha2_env import HeliAttack2Env; env=HeliAttack2Env(render_mode=None, training_profile='combat_v1', max_episode_steps=300); check_env(env, warn=True); env.close(); print('check_env passed')"
 python -m scripts.run_experiment --total-timesteps 1000 --n-envs 1 --wandb off --eval-episodes 1 --save-replays
+python -m scripts.train_parkour --total-timesteps 1024 --n-envs 1 --vec-env dummy --wandb off
+python -m scripts.train_parkour --total-timesteps 1024 --n-envs 2 --vec-env subproc --wandb off
+python -m scripts.benchmark_vec_envs --total-timesteps 2048 --repeats 1 --vec-envs dummy subproc --n-envs 1 2 --wandb off --device cpu
 ```
 
 Current Heli damage check: `reports/parity_traces/heli_shoots_hero_240_summary.txt` should show `initial_player_health=100`, `final_player_health=90`, `enemy_bullet_hits=1`, and `first_enemy_damage_frame=240`.
@@ -62,5 +65,6 @@ Local environment:
 - Use `.\.venv\Scripts\Activate.ps1` before running commands interactively.
 
 `scripts.run_experiment.py` is the canonical local training entry point.
+Vector-env benchmark reports are written to ignored files under `reports/vec_env_benchmarks/`.
 
 Final reports should stay concise: files changed, validation run, pass/fail, manual checks, blockers, risks, next step.

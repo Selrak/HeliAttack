@@ -362,6 +362,31 @@ Added a GUI fast-forward toggle for replay and model-watch viewers.
 ### Suggested Next Step
 - Manually test `F` in `python -m scripts.play_replay ...` and `python -m scripts.watch_model ...`.
 
+## 2026-05-14 Europe/Paris - Visual Startup Speed Pass
+
+- Task: profile visual startup again and apply only clean low-risk improvements.
+- Changed: `ha2_env.py`, `scripts/play_human.py`, `scripts/play_replay.py`, `scripts/watch_model.py`, `docs/ai/CURRENT_STATE.md`, and `docs/ai/CODEX_SESSION_LOG.md`.
+- Findings: normal env first render is import-bound at about `0.68-0.72s`; replay loading for a 1545-step replay adds about `0.04s`; `watch_model` with the latest 1m experiment model measured about `5.8s`, dominated by SB3 import (`~3.85s`) and model load (`~1.57s`).
+- Implemented: suppress Pygame support prompt before Pygame import, avoid the first-render debug-panel display resize, defer `watch_model` Pygame/env/replay imports until after model path resolution and SB3 model load, and keep NumPy lazy for GIF recording.
+- Validation passed: `py_compile ha2_env.py scripts/play_human.py scripts/play_replay.py scripts/watch_model.py`; `pytest -q tests/test_env_basic.py tests/test_experiment_outputs.py` (`31 passed`).
+- Manual GUI not run.
+- Remaining risk: larger startup gains would require a broader lazy-Pygame/env import split or persistent process strategy; current clean low-risk headroom is small.
+
+## 2026-05-14 Europe/Paris - VecEnv Benchmark Pass
+
+- Task: add safe optional `DummyVecEnv`/`SubprocVecEnv` selection and a small PPO benchmark matrix.
+- Changed: `scripts/train_parkour.py`, `scripts/run_experiment.py`, `scripts/benchmark_vec_envs.py`, `tests/test_vec_env_benchmark.py`, `.gitignore`, `docs/ai/CURRENT_STATE.md`, `docs/ai/VALIDATION.md`, and `docs/ai/CODEX_SESSION_LOG.md`.
+- Also retained prior same-session visual startup cleanup in `ha2_env.py`, `scripts/play_human.py`, `scripts/play_replay.py`, and `scripts/watch_model.py`.
+- Behavior: `--vec-env dummy|subproc` is available in `train_parkour` and `run_experiment`; default remains `dummy`.
+- Benchmark reports: `reports/vec_env_benchmarks/20260514_163024_vec_env_benchmark.json` and `.md`.
+- Benchmark summary: dummy/1 env `29.20s`, `70.1` computed steps/s, SB3 fps `88`; dummy/2 env `31.40s`, `65.2`, fps `147`; subproc/1 env `29.51s`, `69.4`, fps `86`; subproc/2 env `32.11s`, `63.8`, fps `169`.
+- Result: SubprocVecEnv worked on Windows at `n_envs=2`, but it was slightly slower wall-clock than DummyVecEnv in this tiny laptop smoke benchmark.
+- Validation passed: full `py_compile`; `pytest -q` (`54 passed`); dummy train smoke; subproc train smoke; benchmark smoke; random replay record/verify; scripted trace all; key replay verifies.
+- Warning observed: SB3 warns that SubprocVecEnv training env and eval env wrapper types differ; training still completed and saved models.
+- Manual GUI not run.
+- Remaining risk: tiny 2048-step smoke runs are not enough to pick a default for 500k+ runs; run a larger local benchmark before changing defaults.
+- Suggested next step: `python -m scripts.benchmark_vec_envs --total-timesteps 8192 --repeats 2 --vec-envs dummy subproc --n-envs 1 2 4 8 --wandb off --device cpu`.
+
 ## 2026-05-13 23:55 Europe/Paris - WandB Experiment Sync System
 
 ### Task Attempted

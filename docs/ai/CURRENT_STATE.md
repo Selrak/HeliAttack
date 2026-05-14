@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-05 Europe/Paris
+Last updated: 2026-05-14 Europe/Paris
 
 ## What Appears to Work
 - Python 3.11.9 is available locally; `.venv` has pytest and SB3 installed.
@@ -27,7 +27,12 @@ Last updated: 2026-05-05 Europe/Paris
 - `scripts.evaluate_model` can resolve `best` and `latest` model files from an experiment and writes eval reports/replays inside that experiment by default.
 - `scripts.watch_model` can resolve experiment-scoped `best` and `latest` models and can auto-name optional replay/GIF outputs under the experiment.
 - `scripts.play_replay` and `scripts.watch_model` now support an `F` fast-forward toggle for faster GUI inspection.
+- Visual startup was profiled again on 2026-05-14. Normal env first-render startup is still mostly import-bound at about `0.68-0.72s` in dummy video mode; `watch_model` with a real model is dominated by SB3 import and model load at about `5.8s` total.
+- `watch_model` now defers Pygame/env/replay imports until after model path resolution and SB3 model load, and GIF NumPy import remains lazy.
+- Pygame support prompt output is suppressed before Pygame import in the visual entry points and env module.
 - `scripts.run_experiment` is now available as a bounded training orchestration layer that runs training and then evaluation on both the `best` and `latest` models, producing a complete experiment folder and an updated `summary.md`.
+- `scripts.train_parkour` and `scripts.run_experiment` support optional `--vec-env dummy|subproc`; the default remains `dummy`.
+- `scripts.benchmark_vec_envs` benchmarks short PPO runs across DummyVecEnv/SubprocVecEnv matrices and writes JSON/Markdown reports under `reports/vec_env_benchmarks/`.
 - `ha2_env.py` tracks detailed firing metrics (`player_shot_attempts`, `player_bullets_spawned`, `player_shots_spawn_blocked`) instead of just a generic `gun_shots`.
 - `scripts.evaluate_model` produces an evaluation JSON report that includes aggregate combat diagnostics (min, max, mean, std, sum) in a structured `"metrics"` dictionary, explicit `"rates"` (hit, death, fall, timeout), and `"marginal_action_distributions"`.
 - Experiments can now be synchronized across machines using WandB Artifacts. `scripts.run_experiment` (with `--wandb on`) automatically uploads the experiment folder, and `scripts.sync_experiment` downloads it to other machines.
@@ -43,6 +48,7 @@ Last updated: 2026-05-05 Europe/Paris
 - New Heli gun/enemy-bullet GUI feel still needs Charles manual checks.
 - `scripts.watch_model` manual GUI validation was not run during the experiment-directory pass.
 - Fast-forward GUI behavior has not yet been manually evaluated for feel or frame pacing.
+- SubprocVecEnv works in a smoke run on Windows at `n_envs=2`, but the 2026-05-14 laptop smoke benchmark was slightly slower wall-clock than DummyVecEnv for tiny 2048-step cases.
 
 ## Current Architecture
 - `ha2_env.py` contains the main runtime architecture: environment state, player physics, default MachineGun/bullets, one default Heli enemy target, collision checks against `const.FULL_MAP_DATA`, rendering, and state/hash debug hooks.
