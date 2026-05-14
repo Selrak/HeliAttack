@@ -12,6 +12,7 @@ replays/
 recordings/
 screenshots/
 reports/parity_traces/
+reports/vec_env_benchmarks/
 reports/eval*.json
 reports/evaluations.npz
 reference_exports/

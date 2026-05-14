@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 from datetime import datetime
 import os
 from pathlib import Path
@@ -26,18 +27,65 @@ def _load_sb3():
         from stable_baselines3 import PPO
         from stable_baselines3.common.callbacks import CheckpointCallback, EvalCallback
         from stable_baselines3.common.monitor import Monitor
-        from stable_baselines3.common.vec_env import DummyVecEnv
+        from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
     except ModuleNotFoundError as exc:
         raise SystemExit(
             "stable-baselines3 is not installed. Install requirements before training."
         ) from exc
-    return PPO, CheckpointCallback, EvalCallback, Monitor, DummyVecEnv
+    return PPO, CheckpointCallback, EvalCallback, Monitor, DummyVecEnv, SubprocVecEnv
+
+
+@dataclass(frozen=True)
+class EnvFactory:
+    rank: int
+    seed: int
+    training_profile: str
+    max_episode_steps: int
+
+    def __call__(self):
+        from stable_baselines3.common.monitor import Monitor
+
+        env = HeliAttack2Env(
+            render_mode=None,
+            training_profile=self.training_profile,
+            max_episode_steps=self.max_episode_steps,
+        )
+        env.reset(seed=self.seed + self.rank)
+        return Monitor(env)
+
+
+def make_vec_env(
+    *,
+    vec_env: str,
+    n_envs: int,
+    seed: int,
+    training_profile: str,
+    max_episode_steps: int,
+    monitor_cls,
+    dummy_vec_env_cls,
+    subproc_vec_env_cls,
+):
+    env_fns = [
+        EnvFactory(
+            rank=i,
+            seed=seed,
+            training_profile=training_profile,
+            max_episode_steps=max_episode_steps,
+        )
+        for i in range(n_envs)
+    ]
+    if vec_env == "dummy":
+        return dummy_vec_env_cls(env_fns)
+    if vec_env == "subproc":
+        return subproc_vec_env_cls(env_fns)
+    raise ValueError(f"Unknown vec_env: {vec_env}")
 
 def main(args_list: list[str] | None = None) -> ExperimentLayout:
     parser = argparse.ArgumentParser(description="Minimal HA2 parkour PPO training.")
     parser.add_argument("--total-timesteps", type=int, default=10_000)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--n-envs", type=int, default=1)
+    parser.add_argument("--vec-env", choices=["dummy", "subproc"], default="dummy")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--tensorboard-log", type=Path, default=None)
     parser.add_argument("--wandb", choices=["off", "on"], default="off")
@@ -51,7 +99,7 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
     parser.add_argument("--mirror-root-models", action="store_true")
     args = parser.parse_args(args_list)
 
-    PPO, CheckpointCallback, EvalCallback, Monitor, DummyVecEnv = _load_sb3()
+    PPO, CheckpointCallback, EvalCallback, Monitor, DummyVecEnv, SubprocVecEnv = _load_sb3()
     repo_root = Path(__file__).resolve().parents[1]
     layout = create_experiment_layout(
         experiments_root=args.experiments_root,
@@ -71,6 +119,7 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         "total_timesteps": int(args.total_timesteps),
         "seed": int(args.seed),
         "n_envs": int(args.n_envs),
+        "vec_env": args.vec_env,
         "device": args.device,
         "training_profile": args.training_profile,
         "max_episode_steps": int(args.max_episode_steps),
@@ -82,19 +131,16 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
     write_json_file(layout.config_path, config)
     write_text_file(layout.git_info_path, git_info_text(repo_root), allow_overwrite=True)
 
-    def make_env(rank: int):
-        def _init():
-            env = HeliAttack2Env(
-                render_mode=None,
-                training_profile=args.training_profile,
-                max_episode_steps=args.max_episode_steps,
-            )
-            env.reset(seed=args.seed + rank)
-            return Monitor(env)
-
-        return _init
-
-    env = DummyVecEnv([make_env(i) for i in range(args.n_envs)])
+    env = make_vec_env(
+        vec_env=args.vec_env,
+        n_envs=args.n_envs,
+        seed=args.seed,
+        training_profile=args.training_profile,
+        max_episode_steps=args.max_episode_steps,
+        monitor_cls=Monitor,
+        dummy_vec_env_cls=DummyVecEnv,
+        subproc_vec_env_cls=SubprocVecEnv,
+    )
     eval_env = Monitor(
         HeliAttack2Env(
             render_mode=None,
@@ -173,6 +219,7 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         f"- total_timesteps: `{args.total_timesteps}`",
         f"- seed: `{args.seed}`",
         f"- n_envs: `{args.n_envs}`",
+        f"- vec_env: `{args.vec_env}`",
         f"- device: `{args.device}`",
         f"- tensorboard_log: `{tensorboard_log}`",
         f"- latest_model: `{layout.models_dir / 'latest.zip'}`",

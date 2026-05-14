@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import zipfile
 
 from scripts import train_parkour
 from scripts import evaluate_model
@@ -12,6 +13,7 @@ def main() -> None:
     parser.add_argument("--total-timesteps", type=int, default=10_000)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--n-envs", type=int, default=1)
+    parser.add_argument("--vec-env", choices=["dummy", "subproc"], default="dummy")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--wandb", choices=["off", "on"], default="off")
     parser.add_argument("--eval-episodes", type=int, default=5)
@@ -25,6 +27,7 @@ def main() -> None:
         "--total-timesteps", str(args.total_timesteps),
         "--seed", str(args.seed),
         "--n-envs", str(args.n_envs),
+        "--vec-env", args.vec_env,
         "--device", str(args.device),
         "--wandb", args.wandb,
         "--max-episode-steps", str(args.max_episode_steps),
