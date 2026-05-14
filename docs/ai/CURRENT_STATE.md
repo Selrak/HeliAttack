@@ -22,7 +22,8 @@ Last updated: 2026-05-14 Europe/Paris
 - `scripts.play_human` accepts both `WASD` and `ZQSD` movement keys, and its mouse input helper falls back cleanly when no video system is active.
 - `scripts/export_ffdec_reference.ps1` can export broad FFDEC reference data from a SWF and auto-detects `C:\Program Files (x86)\FFDec\ffdec-cli.exe`.
 - `training_profile="combat_v1"` is available as an opt-in RL interface: 37-field bounded float32 vector observation, combat-aware reward, player-death/fall termination, and max-step truncation.
-- `scripts.train_parkour`, `scripts.evaluate_model`, and `scripts.watch_model` default to `combat_v1` with `max_episode_steps=1800`.
+- `training_profile="combat_bullets_v1"` is available, extending the observation to 84 dimensions by replacing the single nearest bullet with a top-10 visible bullet block to enable defensive maneuvering.
+- `scripts.train_parkour`, `scripts.evaluate_model`, and `scripts.watch_model` default to `combat_v1` with `max_episode_steps=1800` but support `combat_bullets_v1`.
 - Experiments are now the default unit of RL artifact storage: `scripts.train_parkour` creates `experiments/ha2_000001_YYYYMMDD_HHMM_combat-v1_1k/`-style runs with `config.json`, `git_info.txt`, `summary.md`, `models/`, `reports/`, `replays/`, and `tensorboard/`.
 - `scripts.evaluate_model` can resolve `best` and `latest` model files from an experiment and writes eval reports/replays inside that experiment by default.
 - `scripts.watch_model` can resolve experiment-scoped `best` and `latest` models and can auto-name optional replay/GIF outputs under the experiment.
@@ -36,6 +37,8 @@ Last updated: 2026-05-14 Europe/Paris
 - `scripts.benchmark_vec_envs` supports `--mode train-only|workflow|both`, records eval wrapper match/warning status, and writes JSON/Markdown reports under `reports/vec_env_benchmarks/`.
 - `ha2_env.py` tracks detailed firing metrics (`player_shot_attempts`, `player_bullets_spawned`, `player_shots_spawn_blocked`) instead of just a generic `gun_shots`.
 - `scripts.evaluate_model` produces an evaluation JSON report that includes aggregate combat diagnostics (min, max, mean, std, sum) in a structured `"metrics"` dictionary, explicit `"rates"` (hit, death, fall, timeout), and `"marginal_action_distributions"`.
+- Evaluation now includes visible enemy-bullet diagnostics, top-10 visible-bullet pressure counters, damage timing, and damage-free streak metrics. Off-screen enemy bullets are excluded from the player-visible defensive denominator.
+- `docs/ai/OBSERVATION_AUDIT.md` documents that `combat_v1` exposes one nearest engine-side enemy bullet, including velocity, but not all visible bullets.
 - Experiments can now be synchronized across machines using WandB Artifacts. `scripts.run_experiment` (with `--wandb on`) automatically uploads the experiment folder, and `scripts.sync_experiment` downloads it to other machines.
 - Local configuration via `.env` is supported for setting `WANDB_API_KEY`, `WANDB_ENTITY`, and `WANDB_PROJECT` on a per-folder basis.
 - Charles manually exercised GUI play/replay checks after the scripted trace phase and reported they looked OK.
@@ -50,6 +53,7 @@ Last updated: 2026-05-14 Europe/Paris
 - `scripts.watch_model` manual GUI validation was not run during the experiment-directory pass.
 - Fast-forward GUI behavior has not yet been manually evaluated for feel or frame pacing.
 - SubprocVecEnv works in Windows smoke runs, including `--eval-vec-env same`; local tiny benchmarks still favor DummyVecEnv by wall-clock.
+- The new defensive diagnostics need review on real 500k experiments; current validation only used a 1000-step smoke model.
 
 ## Current Architecture
 - `ha2_env.py` contains the main runtime architecture: environment state, player physics, default MachineGun/bullets, one default Heli enemy target, collision checks against `const.FULL_MAP_DATA`, rendering, and state/hash debug hooks.
@@ -76,6 +80,7 @@ Last updated: 2026-05-14 Europe/Paris
 - Heli death respawn is implemented; non-training side effects remain omitted: pickups, drops, random weapon rewards, explosions, shards, blood, sounds, and bullet-time refill.
 - Only the original player healthbar HUD is implemented; score/time/ammo/reload/hyperjump HUD composition remains future work.
 - `combat_v1` is an RL interface layer only; it does not prove AS parity or tune PPO behavior.
+- `combat_v1` defensive visibility diagnostics use bullet center plus an 8 px margin against the gameplay viewport; exact Flash sprite visibility is not proven.
 - Player bitmap registration, nested walk cadence, AS casing quirks, and edge `hitCheck` behavior remain uncertain; see `docs/parity_notes.md`.
 - The generated constants file is large and should not be edited manually without a clear reason.
 - Future sessions must check `git status` before editing and avoid reverting user work.

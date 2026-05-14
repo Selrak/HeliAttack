@@ -23,6 +23,7 @@ def main() -> None:
     parser.add_argument("--eval-episodes", type=int, default=5)
     parser.add_argument("--experiment-name", type=str, default=None)
     parser.add_argument("--save-replays", action="store_true")
+    parser.add_argument("--training-profile", choices=["legacy", "combat_v1", "combat_bullets_v1"], default="combat_v1")
     parser.add_argument("--max-episode-steps", type=int, default=1800)
     parser.add_argument("--watch", action="store_true")
     args = parser.parse_args()
@@ -37,6 +38,7 @@ def main() -> None:
         "--eval-vec-env", args.eval_vec_env,
         "--device", str(args.device),
         "--wandb", args.wandb,
+        "--training-profile", args.training_profile,
         "--max-episode-steps", str(args.max_episode_steps),
         "--no-wandb-finish"
     ]
@@ -56,6 +58,7 @@ def main() -> None:
             "--model-choice", model_choice,
             "--episodes", str(args.eval_episodes),
             "--seed", str(args.seed + 1000),
+            "--training-profile", args.training_profile,
             "--max-episode-steps", str(args.max_episode_steps),
         ]
         if args.save_replays:
@@ -85,18 +88,46 @@ def main() -> None:
         summary_content += f"\n\n## Evaluation Results ({args.eval_episodes} episodes)\n\n"
         summary_content += "| Metric | Best Model | Latest Model |\n"
         summary_content += "|---|---|---|\n"
+
+        def fmt_number(value):
+            return "n/a" if value is None else f"{float(value):.2f}"
+
+        def fmt_percent(value):
+            return "n/a" if value is None else f"{float(value):.2%}"
         
         metrics = ["reward", "length", "heli_kills", "player_damage", "final_score"]
         for m in metrics:
             best_val = best_report["metrics"][m]["mean"]
             latest_val = latest_report["metrics"][m]["mean"]
-            summary_content += f"| Mean {m.replace('_', ' ').title()} | {best_val:.2f} | {latest_val:.2f} |\n"
+            summary_content += f"| Mean {m.replace('_', ' ').title()} | {fmt_number(best_val)} | {fmt_number(latest_val)} |\n"
             
         rates = ["hit_rate", "death_rate", "timeout_rate"]
         for r in rates:
-            best_val = best_report["rates"].get(r, 0.0)
-            latest_val = latest_report["rates"].get(r, 0.0)
-            summary_content += f"| {r.replace('_', ' ').title()} | {best_val:.2%} | {latest_val:.2%} |\n"
+            best_val = best_report["rates"].get(r)
+            latest_val = latest_report["rates"].get(r)
+            summary_content += f"| {r.replace('_', ' ').title()} | {fmt_percent(best_val)} | {fmt_percent(latest_val)} |\n"
+
+        defensive_metrics = [
+            ("visible_enemy_bullets_seen_unique", "Visible Bullets Seen"),
+            ("visible_enemy_bullets_max", "Max Visible Bullets"),
+            ("visible_enemy_bullets_over_top10_frames", "Frames Over 10 Visible Bullets"),
+            ("damage_events", "Mean Damage Events"),
+            ("time_to_first_damage", "Mean Time To First Damage"),
+            ("longest_damage_free_streak", "Mean Longest Damage-Free Streak"),
+        ]
+        for key, label in defensive_metrics:
+            best_val = best_report["metrics"].get(key, {}).get("mean")
+            latest_val = latest_report["metrics"].get(key, {}).get("mean")
+            summary_content += f"| {label} | {fmt_number(best_val)} | {fmt_number(latest_val)} |\n"
+
+        defensive_rates = [
+            ("visible_enemy_bullet_hit_rate_against_player", "Visible Bullet Hit Rate"),
+            ("damage_free_episode_rate", "Damage-Free Episodes"),
+        ]
+        for key, label in defensive_rates:
+            best_val = best_report["rates"].get(key)
+            latest_val = latest_report["rates"].get(key)
+            summary_content += f"| {label} | {fmt_percent(best_val)} | {fmt_percent(latest_val)} |\n"
 
         with open(summary_path, "w") as f:
             f.write(summary_content)

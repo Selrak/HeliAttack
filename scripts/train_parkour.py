@@ -99,7 +99,7 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
     parser.add_argument("--device", default="auto")
     parser.add_argument("--tensorboard-log", type=Path, default=None)
     parser.add_argument("--wandb", choices=["off", "on"], default="off")
-    parser.add_argument("--training-profile", choices=["legacy", "combat_v1"], default="combat_v1")
+    parser.add_argument("--training-profile", choices=["legacy", "combat_v1", "combat_bullets_v1"], default="combat_v1")
     parser.add_argument("--max-episode-steps", type=int, default=1800)
     parser.add_argument("--experiments-root", type=Path, default=Path("experiments"))
     parser.add_argument("--experiment-dir", type=Path, default=None)

@@ -513,6 +513,42 @@ Improve RL experiment diagnostics by evaluating both best and latest models, gen
 ### Recommended Next Action
 - Conduct the 500k RL training run on the Ubuntu workstation using `run_experiment.py`.
 
+## 2026-05-14 23:05 Europe/Paris - combat_bullets_v1 Profile
+
+### Task Attempted
+Implement the `combat_bullets_v1` observation profile to support multi-bullet dodging by exposing the top-10 nearest visible enemy bullets instead of just one engine-nearest bullet.
+
+### Files Changed or Created
+- Updated `ha2_env.py` to define `COMBAT_BULLETS_V1_OBS_FIELDS` (84 dimensions), implement `_get_combat_bullets_v1_obs`, and update `_get_obs` and `__init__` space definitions.
+- Updated `scripts/train_parkour.py`, `scripts/evaluate_model.py`, `scripts/watch_model.py`, and `scripts/run_experiment.py` to accept `combat_bullets_v1` as a valid `--training-profile`.
+- Updated `docs/ai/OBSERVATION_AUDIT.md`, `docs/ai/CURRENT_STATE.md`, and `docs/ai/CODEX_SESSION_LOG.md`.
+
+### Repository Facts Discovered
+- `combat_v1` had exactly 37 fields; replacing the 5 nearest-bullet fields with 2 global counts and 10 bullets of 5 fields each accurately sums to 84 fields.
+- The `enemy_bullet_count` field existed *before* the nearest bullet fields in `combat_v1` and was retained.
+
+### Commands Run
+- `python -m scripts.run_experiment --total-timesteps 100 --n-envs 1 --wandb off --eval-episodes 1 --training-profile combat_bullets_v1`
+
+### Validation Result
+- Passed: `ha2_env.py` generates the 84-dimensional `combat_bullets_v1` observation.
+- Passed: `run_experiment.py` successfully trains and evaluates using the new profile.
+
+### Bugs or Blockers Encountered
+- `AssertionError: combat_bullets_v1 observation size mismatch: (83,)` occurred during initial testing.
+
+### Fixes or Workarounds Applied
+- Fixed the observation size mismatch by correctly appending the `enemy_bullet_count` back into the array generation logic for the new profile, as it was inadvertently left out during the copy-paste from `combat_v1`.
+
+### Architectural Discrepancies
+- None. The new profile is cleanly separated from `combat_v1`, which remains unchanged.
+
+### Remaining Risks
+- The 100-timestep smoke run proves the array shape is correct and SB3 accepts it, but does not prove the model can effectively learn the 10-bullet array representation.
+
+### Recommended Next Action
+- Run a longer training session (e.g., 500k timesteps) using `--training-profile combat_bullets_v1` and compare the dodging behavior against the `combat_v1` baseline.
+
 ## 2026-05-14 17:50 Europe/Paris - VecEnv Eval Controls and Benchmark Modes
 
 ### Task Attempted
@@ -546,3 +582,40 @@ Add explicit training-time eval controls and split VecEnv benchmarks into train-
 
 ### Suggested Next Step
 - Run `python -m scripts.benchmark_vec_envs --mode both --total-timesteps 8192 --repeats 2 --vec-envs dummy subproc --n-envs 1 2 4 8 --eval-vec-env same --wandb off --device cpu`.
+
+## 2026-05-14 20:02 Europe/Paris - Defensive Diagnostics and Observation Audit
+
+### Task Attempted
+Add visible enemy-bullet diagnostics, damage timing metrics, compact eval summary rows, and a `combat_v1` observation audit without changing simulator mechanics, rewards, observations, or replay state.
+
+### Files Changed
+- `ha2_env.py`
+- `scripts/evaluate_model.py`
+- `scripts/run_experiment.py`
+- `tests/test_rl_interface.py`
+- `tests/test_experiment_outputs.py`
+- `docs/ai/OBSERVATION_AUDIT.md`
+- `docs/ai/CURRENT_STATE.md`
+- `docs/ai/VALIDATION.md`
+- `docs/ai/CODEX_SESSION_LOG.md`
+
+### Validation
+- Passed: py_compile for required core files and scripts.
+- Passed: `python -m pytest -q` using `.venv` (`64 passed`).
+- Passed: random replay and required scripted trace verification.
+- Passed: `python -m scripts.run_experiment --total-timesteps 1000 --n-envs 1 --wandb off --eval-episodes 1 --save-replays`.
+- Smoke experiment: `experiments/ha2_000023_20260514_2001_combat-v1_1k`.
+
+### Diagnostic Facts
+- Visible predicate: enemy bullet center transformed by `world_x/world_y` must intersect the gameplay viewport with an 8 px margin; the debug side panel is excluded.
+- Off-screen bullets are excluded from visible defensive denominators.
+- Top-10 clipping pressure is reported through frames over 10 visible bullets and max excess.
+- Replay hashes stayed valid after regenerated trace verification.
+- `combat_v1` currently exposes one nearest engine-side enemy bullet with relative position and velocity, not all visible bullets.
+
+### Remaining Risks
+- The visible predicate approximates sprite bounds by center plus margin; exact Flash visibility is not proven.
+- Defensive metrics need review on real 500k experiment reports before changing observations or rewards.
+
+### Suggested Next Step
+- Compare the existing 500k `combat_v1` runs with the new defensive diagnostics, especially damage timing and visible bullet hit rate.

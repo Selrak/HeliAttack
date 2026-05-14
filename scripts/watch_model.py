@@ -39,7 +39,7 @@ def main(args_list: list[str] | None = None) -> None:
     parser.add_argument("--stochastic", action="store_true")
     parser.add_argument("--save-replay", nargs="?", const=DEFAULT_OUTPUT, default=None, type=str)
     parser.add_argument("--record-gif", nargs="?", const=DEFAULT_OUTPUT, default=None, type=str)
-    parser.add_argument("--training-profile", choices=["legacy", "combat_v1"], default="combat_v1")
+    parser.add_argument("--training-profile", choices=["legacy", "combat_v1", "combat_bullets_v1"], default="combat_v1")
     parser.add_argument("--max-episode-steps", type=int, default=1800)
     args = parser.parse_args(args_list)
 

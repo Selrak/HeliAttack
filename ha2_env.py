@@ -55,6 +55,7 @@ HELI_GUN_SMOOTHING_BASE = 10
 HELI_SHOOT_RELOAD_BASE = 16
 ENEMY_BULLET_SPEED = 7.0
 ENEMY_BULLET_DAMAGE = 10
+ENEMY_BULLET_VISIBILITY_MARGIN = 8.0
 AS_STW = math.ceil(const.SCREEN_WIDTH / const.TILE_SIZE)
 AS_STH = math.ceil(const.SCREEN_HEIGHT / const.TILE_SIZE)
 AS_SPW = AS_STW * const.TILE_SIZE
@@ -64,7 +65,7 @@ HUD_HEALTH_X = 429
 HUD_HEALTH_Y = 0
 HUD_HEALTH_BITMAP_X = 4
 HUD_HEALTH_BITMAP_Y = 0
-TRAINING_PROFILES = {"legacy", "combat_v1"}
+TRAINING_PROFILES = {"legacy", "combat_v1", "combat_bullets_v1"}
 COMBAT_V1_OBS_FIELDS = (
     "player_x_norm",
     "player_y_norm",
@@ -105,6 +106,39 @@ COMBAT_V1_OBS_FIELDS = (
     "score",
 )
 COMBAT_V1_OBS_SIZE = len(COMBAT_V1_OBS_FIELDS)
+
+COMBAT_BULLETS_V1_OBS_FIELDS = list(COMBAT_V1_OBS_FIELDS)
+# Remove the old nearest-bullet fields
+for _f in [
+    "has_nearest_enemy_bullet",
+    "nearest_enemy_bullet_rel_x",
+    "nearest_enemy_bullet_rel_y",
+    "nearest_enemy_bullet_xspeed",
+    "nearest_enemy_bullet_yspeed",
+]:
+    COMBAT_BULLETS_V1_OBS_FIELDS.remove(_f)
+
+# Insert the new visible-bullet fields in the same relative position
+_insert_idx = COMBAT_BULLETS_V1_OBS_FIELDS.index("enemy_bullet_count") + 1
+_new_bullet_fields = [
+    "visible_enemy_bullet_count_normalized",
+    "visible_enemy_bullets_over_top10_normalized",
+]
+for i in range(10):
+    _new_bullet_fields.extend([
+        f"visible_bullet_{i}_active",
+        f"visible_bullet_{i}_rel_x",
+        f"visible_bullet_{i}_rel_y",
+        f"visible_bullet_{i}_xspeed",
+        f"visible_bullet_{i}_yspeed",
+    ])
+COMBAT_BULLETS_V1_OBS_FIELDS = tuple(
+    COMBAT_BULLETS_V1_OBS_FIELDS[:_insert_idx]
+    + _new_bullet_fields
+    + COMBAT_BULLETS_V1_OBS_FIELDS[_insert_idx:]
+)
+COMBAT_BULLETS_V1_OBS_SIZE = len(COMBAT_BULLETS_V1_OBS_FIELDS)
+
 
 
 class HeliAttack2Env(gym.Env):
@@ -157,6 +191,12 @@ class HeliAttack2Env(gym.Env):
                 dtype=np.float32,
             )
             self.observation_space = spaces.Box(low=-high, high=high, dtype=np.float32)
+        elif self.training_profile == "combat_bullets_v1":
+            self.observation_space = spaces.Box(
+                low=-np.ones(COMBAT_BULLETS_V1_OBS_SIZE, dtype=np.float32),
+                high=np.ones(COMBAT_BULLETS_V1_OBS_SIZE, dtype=np.float32),
+                dtype=np.float32,
+            )
         else:
             self.observation_space = spaces.Box(
                 low=-np.ones(COMBAT_V1_OBS_SIZE, dtype=np.float32),
@@ -225,6 +265,7 @@ class HeliAttack2Env(gym.Env):
         self.default_heli_spawned = False
         self.last_player_damage_tick: int | None = None
         self.last_player_damage_amount = 0
+        self._reset_defensive_diagnostics()
 
         self.tick = 0
         self.last_action = [1, 0, 0, 0, DEFAULT_AIM_BIN, 0]
@@ -278,6 +319,19 @@ class HeliAttack2Env(gym.Env):
             "killed_enemy_ids": [],
             "player_damage": 0,
         }
+
+    def _reset_defensive_diagnostics(self) -> None:
+        self.visible_enemy_bullet_ids_seen: set[int] = set()
+        self.visible_enemy_bullet_ids_hit_player: set[int] = set()
+        self.visible_enemy_bullet_ids_removed_without_hit: set[int] = set()
+        self.visible_enemy_bullets_current = 0
+        self.visible_enemy_bullets_max = 0
+        self.visible_enemy_bullets_count_sum = 0
+        self.visible_enemy_bullets_sample_count = 0
+        self.visible_enemy_bullets_over_top10_frames = 0
+        self.max_visible_enemy_bullets_over_top10_excess = 0
+        self.enemy_bullet_hits_not_visible = 0
+        self.damage_event_frames: list[int] = []
 
     def _ensure_pygame_ready(self, display_size: tuple[int, int] | None = None) -> None:
         if self.render_mode == "rgb_array":
@@ -402,7 +456,7 @@ class HeliAttack2Env(gym.Env):
         self.last_player_damage_tick = None
         self.last_player_damage_amount = 0
         self.total_player_damage = 0
-        self.total_player_damage = 0
+        self._reset_defensive_diagnostics()
         self.world_x = 0.0
         self.world_y = 0.0
         self.worldpos = [0, 0]
@@ -427,6 +481,8 @@ class HeliAttack2Env(gym.Env):
         return self._get_obs(), self.get_debug_info()
 
     def _get_obs(self) -> np.ndarray:
+        if self.training_profile == "combat_bullets_v1":
+            return self._get_combat_bullets_v1_obs()
         if self.training_profile == "combat_v1":
             return self._get_combat_v1_obs()
         return self._get_legacy_obs()
@@ -459,6 +515,92 @@ class HeliAttack2Env(gym.Env):
             self.enemy_bullets,
             key=lambda bullet: (float(bullet["x"]) - self._x) ** 2 + (float(bullet["y"]) - self._y) ** 2,
         )
+
+    def _get_combat_bullets_v1_obs(self) -> np.ndarray:
+        gun_sin, gun_cos = self._angle_sin_cos(self.gun_rotation)
+        aim_sin, aim_cos = self._angle_sin_cos(self.aim_rotation)
+        if math.isinf(self.gun_reloadtime):
+            reload_fraction = 1.0
+            gun_ready = 1.0
+        else:
+            reload_fraction = float(np.clip(self.gun_reloadtime / MACHINEGUN_RELOADTIME, 0.0, 1.0))
+            gun_ready = 1.0 if self.gun_reloadtime >= MACHINEGUN_RELOADTIME else 0.0
+
+        values = [
+            self._clip_norm(self._x, self.map_pixel_width),
+            self._clip_norm(self._y, self.map_pixel_height),
+            self._clip_norm(self.xspeed, 10.0),
+            self._clip_norm(self.yspeed, float(const.TILE_SIZE)),
+            float(np.clip(self.health / PLAYER_DEFAULT_HEALTH, 0.0, 1.0)),
+            1.0 if self.jump == 0 and self.yspeed == 0 else 0.0,
+            1.0 if self.jump else 0.0,
+            1.0 if self.jump2 else 0.0,
+            1.0 if self.duck else 0.0,
+            float(np.clip(self.hyperjump / 150.0, 0.0, 1.0)),
+            gun_sin,
+            gun_cos,
+            aim_sin,
+            aim_cos,
+            gun_ready,
+            reload_fraction,
+            float(np.clip(len(self.bullets) / 20.0, 0.0, 1.0)),
+        ]
+
+        enemy = self._primary_enemy()
+        if enemy is None:
+            values.extend([0.0] * 10)
+        else:
+            enemy_gun_sin, enemy_gun_cos = self._angle_sin_cos(
+                float(enemy.get("rotation", 0.0)) + float(enemy.get("gun_rotation", 0.0))
+            )
+            shoot_period = max(10, HELI_SHOOT_RELOAD_BASE - self.level)
+            values.extend(
+                [
+                    1.0,
+                    self._clip_norm(float(enemy["x"]) - self._x, const.SCREEN_WIDTH),
+                    self._clip_norm(float(enemy["y"]) - self._y, const.SCREEN_HEIGHT),
+                    self._clip_norm(float(enemy["xspeed"]), 10.0),
+                    self._clip_norm(float(enemy["yspeed"]), 10.0),
+                    float(np.clip(int(enemy["health"]) / max(1, int(enemy["max_health"])), 0.0, 1.0)),
+                    1.0 if enemy.get("visible", True) else 0.0,
+                    enemy_gun_sin,
+                    enemy_gun_cos,
+                    float(np.clip((int(enemy.get("shoot", 0)) % shoot_period) / shoot_period, 0.0, 1.0)),
+                ]
+            )
+
+        values.append(float(np.clip(len(self.enemy_bullets) / 20.0, 0.0, 1.0)))
+
+        visible_bullets = self.visible_enemy_bullets()
+        values.append(float(np.clip(len(visible_bullets) / 20.0, 0.0, 1.0)))
+        excess = max(0, len(visible_bullets) - 10)
+        values.append(float(np.clip(excess / 10.0, 0.0, 1.0)))
+
+        for i in range(10):
+            if i < len(visible_bullets):
+                bullet = visible_bullets[i]
+                values.extend([
+                    1.0,
+                    self._clip_norm(float(bullet["x"]) - self._x, const.SCREEN_WIDTH),
+                    self._clip_norm(float(bullet["y"]) - self._y, const.SCREEN_HEIGHT),
+                    self._clip_norm(float(bullet["xspeed"]), 10.0),
+                    self._clip_norm(float(bullet["yspeed"]), 10.0),
+                ])
+            else:
+                values.extend([0.0] * 5)
+
+        values.extend(
+            [
+                self._clip_norm(self.world_x, max(1.0, abs(self._world_min_x()))),
+                self._clip_norm(self.world_y, max(1.0, abs(self._world_min_y()))),
+                float(np.clip(self.rthelis / 50.0, 0.0, 1.0)),
+                float(np.clip(self.score / 5000.0, 0.0, 1.0)),
+            ]
+        )
+        obs = np.asarray(values, dtype=np.float32)
+        if obs.shape != (COMBAT_BULLETS_V1_OBS_SIZE,):
+            raise AssertionError(f"combat_bullets_v1 observation size mismatch: {obs.shape}")
+        return obs
 
     def _get_combat_v1_obs(self) -> np.ndarray:
         # COMBAT_V1_OBS_FIELDS defines the stable index layout for SB3 MlpPolicy.
@@ -629,6 +771,51 @@ class HeliAttack2Env(gym.Env):
             "sph": AS_SPH,
             "maxheight": self.map_height * const.TILE_SIZE - const.SCREEN_HEIGHT,
         }
+
+    def _enemy_bullet_screen_pos(self, bullet: dict[str, Any]) -> tuple[float, float]:
+        return float(bullet["x"]) + float(self.world_x), float(bullet["y"]) + float(self.world_y)
+
+    def _enemy_bullet_visible_to_player(self, bullet: dict[str, Any]) -> bool:
+        """Return True when an enemy bullet center is inside the gameplay viewport.
+
+        This intentionally uses the same camera offset as rendering and excludes the
+        debug side panel. The 8 px margin approximates the small enemy-bullet sprite
+        without loading Pygame assets in headless training/evaluation.
+        """
+        screen_x, screen_y = self._enemy_bullet_screen_pos(bullet)
+        margin = ENEMY_BULLET_VISIBILITY_MARGIN
+        return (
+            -margin <= screen_x <= const.SCREEN_WIDTH + margin
+            and -margin <= screen_y <= const.SCREEN_HEIGHT + margin
+        )
+
+    def visible_enemy_bullets(self) -> list[dict[str, Any]]:
+        visible = [
+            bullet
+            for bullet in self.enemy_bullets
+            if self._enemy_bullet_visible_to_player(bullet)
+        ]
+        return sorted(
+            visible,
+            key=lambda bullet: (float(bullet["x"]) - self._x) ** 2
+            + (float(bullet["y"]) - self._y) ** 2,
+        )
+
+    def _update_visible_enemy_bullet_diagnostics(self) -> None:
+        visible = self.visible_enemy_bullets()
+        current = len(visible)
+        self.visible_enemy_bullets_current = current
+        self.visible_enemy_bullets_max = max(self.visible_enemy_bullets_max, current)
+        self.visible_enemy_bullets_count_sum += current
+        self.visible_enemy_bullets_sample_count += 1
+        for bullet in visible:
+            self.visible_enemy_bullet_ids_seen.add(int(bullet["id"]))
+        if current > 10:
+            self.visible_enemy_bullets_over_top10_frames += 1
+            self.max_visible_enemy_bullets_over_top10_excess = max(
+                self.max_visible_enemy_bullets_over_top10_excess,
+                current - 10,
+            )
 
     def _map_tile_empty_at(self, x: float, y: float) -> bool:
         tile_x = math.floor(x / const.TILE_SIZE)
@@ -831,16 +1018,28 @@ class HeliAttack2Env(gym.Env):
             bullet["x"] = float(bullet["x"]) + float(bullet["xspeed"])
             bullet["y"] = float(bullet["y"]) + float(bullet["yspeed"])
             bullet["age"] = int(bullet["age"]) + 1
+            bullet_id = int(bullet["id"])
+            visible_at_resolution = self._enemy_bullet_visible_to_player(bullet)
             if self._enemy_bullet_hit_player(bullet):
                 damage = int(bullet["damage"])
                 self.health -= damage
                 self.enemy_bullet_hits += 1
                 self.last_player_damage_tick = self.tick + 1
                 self.last_player_damage_amount = damage
+                self.damage_event_frames.append(self.tick + 1)
+                if visible_at_resolution:
+                    self.visible_enemy_bullet_ids_seen.add(bullet_id)
+                    self.visible_enemy_bullet_ids_hit_player.add(bullet_id)
+                else:
+                    self.enemy_bullet_hits_not_visible += 1
                 event["player_damage"] += damage
-                event["removed_enemy_bullet_ids"].append(int(bullet["id"]))
+                event["removed_enemy_bullet_ids"].append(bullet_id)
             elif self._projectile_should_remove(float(bullet["x"]), float(bullet["y"])):
-                event["removed_enemy_bullet_ids"].append(int(bullet["id"]))
+                if visible_at_resolution or bullet_id in self.visible_enemy_bullet_ids_seen:
+                    if visible_at_resolution:
+                        self.visible_enemy_bullet_ids_seen.add(bullet_id)
+                    self.visible_enemy_bullet_ids_removed_without_hit.add(bullet_id)
+                event["removed_enemy_bullet_ids"].append(bullet_id)
             else:
                 active.append(bullet)
         self.enemy_bullets = active
@@ -1362,6 +1561,7 @@ class HeliAttack2Env(gym.Env):
             reward = float(sum(reward_breakdown.values()))
 
         self.tick += 1
+        self._update_visible_enemy_bullet_diagnostics()
         self.last_action = action
         self.last_reward = float(reward)
         self.last_terminated = terminated
@@ -1906,6 +2106,69 @@ class HeliAttack2Env(gym.Env):
         payload = json.dumps(self.get_state(), sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
+    def _defensive_diagnostics_info(self) -> dict[str, Any]:
+        sample_count = int(self.visible_enemy_bullets_sample_count)
+        visible_seen = len(self.visible_enemy_bullet_ids_seen)
+        visible_hits = len(self.visible_enemy_bullet_ids_hit_player)
+        damage_frames = list(self.damage_event_frames)
+        intervals = [
+            int(damage_frames[index] - damage_frames[index - 1])
+            for index in range(1, len(damage_frames))
+        ]
+        if damage_frames:
+            streaks = [max(0, int(damage_frames[0]) - 1)]
+            streaks.extend(max(0, int(interval) - 1) for interval in intervals)
+            streaks.append(max(0, int(self.episode_step_count) - int(damage_frames[-1])))
+            longest_damage_free_streak = max(streaks)
+            time_to_first_damage = int(damage_frames[0])
+            frames_since_last_damage = max(0, int(self.episode_step_count) - int(damage_frames[-1]))
+            mean_between = float(np.mean(intervals)) if intervals else None
+            min_between = int(min(intervals)) if intervals else None
+            max_between = int(max(intervals)) if intervals else None
+        else:
+            longest_damage_free_streak = int(self.episode_step_count)
+            time_to_first_damage = None
+            frames_since_last_damage = int(self.episode_step_count)
+            mean_between = None
+            min_between = None
+            max_between = None
+
+        return {
+            "visible_enemy_bullets_current": int(self.visible_enemy_bullets_current),
+            "visible_enemy_bullets_max": int(self.visible_enemy_bullets_max),
+            "visible_enemy_bullets_mean": (
+                float(self.visible_enemy_bullets_count_sum) / float(sample_count)
+                if sample_count > 0
+                else 0.0
+            ),
+            "visible_enemy_bullets_seen_unique": int(visible_seen),
+            "visible_enemy_bullets_hit_player": int(visible_hits),
+            "visible_enemy_bullets_removed_without_hit": len(self.visible_enemy_bullet_ids_removed_without_hit),
+            "visible_enemy_bullet_hit_rate_against_player": (
+                float(visible_hits) / float(visible_seen) if visible_seen > 0 else None
+            ),
+            "visible_enemy_bullets_over_top10_frames": int(self.visible_enemy_bullets_over_top10_frames),
+            "visible_enemy_bullets_over_top10_fraction": (
+                float(self.visible_enemy_bullets_over_top10_frames) / float(sample_count)
+                if sample_count > 0
+                else 0.0
+            ),
+            "max_visible_enemy_bullets_over_top10_excess": int(self.max_visible_enemy_bullets_over_top10_excess),
+            "engine_enemy_bullets_spawned": int(self.total_enemy_bullets_spawned),
+            "engine_enemy_bullets_active": len(self.enemy_bullets),
+            "enemy_bullet_hits_not_visible": int(self.enemy_bullet_hits_not_visible),
+            "damage_event_frames": damage_frames,
+            "damage_events": len(damage_frames),
+            "time_to_first_damage": time_to_first_damage,
+            "frames_between_damage_events": intervals,
+            "mean_frames_between_damage": mean_between,
+            "min_frames_between_damage": min_between,
+            "max_frames_between_damage": max_between,
+            "frames_since_last_damage": frames_since_last_damage,
+            "longest_damage_free_streak": int(longest_damage_free_streak),
+            "damage_free_episode": len(damage_frames) == 0,
+        }
+
     def get_debug_info(self) -> dict[str, Any]:
         info = {
             "tick": self.tick,
@@ -1932,7 +2195,7 @@ class HeliAttack2Env(gym.Env):
             "active_enemy_bullets": len(self.enemy_bullets),
             "last_action": list(self.last_action),
         }
-        if self.training_profile == "combat_v1":
+        if self.training_profile in ("combat_v1", "combat_bullets_v1"):
             info["training_profile"] = self.training_profile
             info["termination_reason"] = self.last_termination_reason
             info["reward_breakdown"] = (
@@ -1949,6 +2212,9 @@ class HeliAttack2Env(gym.Env):
             info["player_shots_spawn_blocked"] = int(self.player_shots_spawn_blocked)
             info["enemy_bullet_hits"] = int(self.enemy_bullet_hits)
             info["score"] = int(self.score)
+            defensive = self._defensive_diagnostics_info()
+            info["defensive_diagnostics"] = defensive
+            info.update(defensive)
         return info
 
     def close(self) -> None:
