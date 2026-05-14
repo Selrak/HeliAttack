@@ -112,5 +112,27 @@ def main() -> None:
         wandb.log_artifact(artifact)
         wandb.finish()
 
+    print("\n=== Phase 5: Diagnostic Bundle ===")
+    bundle_name = f"{layout.path.name}_diagnostic_bundle.zip"
+    bundle_path = layout.path.parent / bundle_name
+    
+    files_to_bundle = [
+        layout.path / "config.json",
+        layout.path / "git_info.txt",
+        layout.path / "summary.md",
+        layout.path / "reports" / "eval_best.json",
+        layout.path / "replays" / "best_eval_ep0.jsonl"
+    ]
+    
+    bundled_count = 0
+    with zipfile.ZipFile(bundle_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for f in files_to_bundle:
+            if f.exists():
+                # Store in zip with the file's name only, or keep a minimal structure
+                zipf.write(f, arcname=f.name)
+                bundled_count += 1
+                
+    print(f"Created {bundle_path} with {bundled_count} files.")
+
 if __name__ == "__main__":
     main()

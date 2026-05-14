@@ -18,3 +18,4 @@ reference_exports/
 wandb/
 *.gif
 *.mp4
+*diagnostic_bundle.zip
