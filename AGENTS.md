@@ -76,3 +76,6 @@
 - Current machine: Windows 11 laptop.
 - Future target machine: Ubuntu 22 ThinkStation P3 Ultra via SSH, possibly with NoMachine.
 - Prefer cross-platform choices where practical, but keep Windows-first execution steps when working locally.
+
+## Source Control Rules
+- **ALWAYS ask for explicit user confirmation before performing a `git commit` or `git push`.** Do not auto-commit changes without presenting the proposed commit message and verifying the user is ready.

@@ -114,7 +114,7 @@ def main() -> None:
 
     print("\n=== Phase 5: Diagnostic Bundle ===")
     bundle_name = f"{layout.path.name}_diagnostic_bundle.zip"
-    bundle_path = layout.path.parent / bundle_name
+    bundle_path = layout.path / bundle_name
     
     files_to_bundle = [
         layout.path / "config.json",
