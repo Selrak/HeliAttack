@@ -32,7 +32,8 @@ Last updated: 2026-05-14 Europe/Paris
 - Pygame support prompt output is suppressed before Pygame import in the visual entry points and env module.
 - `scripts.run_experiment` is now available as a bounded training orchestration layer that runs training and then evaluation on both the `best` and `latest` models, producing a complete experiment folder and an updated `summary.md`.
 - `scripts.train_parkour` and `scripts.run_experiment` support optional `--vec-env dummy|subproc`; the default remains `dummy`.
-- `scripts.benchmark_vec_envs` benchmarks short PPO runs across DummyVecEnv/SubprocVecEnv matrices and writes JSON/Markdown reports under `reports/vec_env_benchmarks/`.
+- `scripts.train_parkour` supports `--train-eval on|off`, `--eval-freq`, `--train-eval-episodes`, and `--eval-vec-env dummy|subproc|same`.
+- `scripts.benchmark_vec_envs` supports `--mode train-only|workflow|both`, records eval wrapper match/warning status, and writes JSON/Markdown reports under `reports/vec_env_benchmarks/`.
 - `ha2_env.py` tracks detailed firing metrics (`player_shot_attempts`, `player_bullets_spawned`, `player_shots_spawn_blocked`) instead of just a generic `gun_shots`.
 - `scripts.evaluate_model` produces an evaluation JSON report that includes aggregate combat diagnostics (min, max, mean, std, sum) in a structured `"metrics"` dictionary, explicit `"rates"` (hit, death, fall, timeout), and `"marginal_action_distributions"`.
 - Experiments can now be synchronized across machines using WandB Artifacts. `scripts.run_experiment` (with `--wandb on`) automatically uploads the experiment folder, and `scripts.sync_experiment` downloads it to other machines.
@@ -48,7 +49,7 @@ Last updated: 2026-05-14 Europe/Paris
 - New Heli gun/enemy-bullet GUI feel still needs Charles manual checks.
 - `scripts.watch_model` manual GUI validation was not run during the experiment-directory pass.
 - Fast-forward GUI behavior has not yet been manually evaluated for feel or frame pacing.
-- SubprocVecEnv works in a smoke run on Windows at `n_envs=2`, but the 2026-05-14 laptop smoke benchmark was slightly slower wall-clock than DummyVecEnv for tiny 2048-step cases.
+- SubprocVecEnv works in Windows smoke runs, including `--eval-vec-env same`; local tiny benchmarks still favor DummyVecEnv by wall-clock.
 
 ## Current Architecture
 - `ha2_env.py` contains the main runtime architecture: environment state, player physics, default MachineGun/bullets, one default Heli enemy target, collision checks against `const.FULL_MAP_DATA`, rendering, and state/hash debug hooks.
@@ -77,7 +78,7 @@ Last updated: 2026-05-14 Europe/Paris
 - `combat_v1` is an RL interface layer only; it does not prove AS parity or tune PPO behavior.
 - Player bitmap registration, nested walk cadence, AS casing quirks, and edge `hitCheck` behavior remain uncertain; see `docs/parity_notes.md`.
 - The generated constants file is large and should not be edited manually without a clear reason.
-- Existing worktree has many modified/untracked files; future Codex sessions must avoid reverting user work.
+- Future sessions must check `git status` before editing and avoid reverting user work.
 
 ## Manual Control Update
 - `scripts.play_human` supports `F12` screenshots saved as incrementing PNG files under `screenshots/` by default.

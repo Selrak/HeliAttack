@@ -14,6 +14,10 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--n-envs", type=int, default=1)
     parser.add_argument("--vec-env", choices=["dummy", "subproc"], default="dummy")
+    parser.add_argument("--train-eval", choices=["on", "off"], default="on")
+    parser.add_argument("--eval-freq", type=int, default=None)
+    parser.add_argument("--train-eval-episodes", type=int, default=5)
+    parser.add_argument("--eval-vec-env", choices=["dummy", "subproc", "same"], default="dummy")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--wandb", choices=["off", "on"], default="off")
     parser.add_argument("--eval-episodes", type=int, default=5)
@@ -28,11 +32,16 @@ def main() -> None:
         "--seed", str(args.seed),
         "--n-envs", str(args.n_envs),
         "--vec-env", args.vec_env,
+        "--train-eval", args.train_eval,
+        "--train-eval-episodes", str(args.train_eval_episodes),
+        "--eval-vec-env", args.eval_vec_env,
         "--device", str(args.device),
         "--wandb", args.wandb,
         "--max-episode-steps", str(args.max_episode_steps),
         "--no-wandb-finish"
     ]
+    if args.eval_freq is not None:
+        train_args.extend(["--eval-freq", str(args.eval_freq)])
     if args.experiment_name is not None:
         train_args.extend(["--experiment-name", args.experiment_name])
 

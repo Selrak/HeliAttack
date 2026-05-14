@@ -80,12 +80,22 @@ def make_vec_env(
         return subproc_vec_env_cls(env_fns)
     raise ValueError(f"Unknown vec_env: {vec_env}")
 
+
+def effective_eval_vec_env(train_vec_env: str, eval_vec_env: str) -> str:
+    if eval_vec_env == "same":
+        return train_vec_env
+    return eval_vec_env
+
 def main(args_list: list[str] | None = None) -> ExperimentLayout:
     parser = argparse.ArgumentParser(description="Minimal HA2 parkour PPO training.")
     parser.add_argument("--total-timesteps", type=int, default=10_000)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--n-envs", type=int, default=1)
     parser.add_argument("--vec-env", choices=["dummy", "subproc"], default="dummy")
+    parser.add_argument("--train-eval", choices=["on", "off"], default="on")
+    parser.add_argument("--eval-freq", type=int, default=None)
+    parser.add_argument("--train-eval-episodes", type=int, default=5)
+    parser.add_argument("--eval-vec-env", choices=["dummy", "subproc", "same"], default="dummy")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--tensorboard-log", type=Path, default=None)
     parser.add_argument("--wandb", choices=["off", "on"], default="off")
@@ -98,6 +108,10 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
     parser.add_argument("--no-wandb-finish", action="store_true", help="Skip artifact upload and wandb finish (for orchestration).")
     parser.add_argument("--mirror-root-models", action="store_true")
     args = parser.parse_args(args_list)
+    if args.eval_freq is not None and args.eval_freq <= 0:
+        raise SystemExit("--eval-freq must be positive")
+    if args.train_eval_episodes <= 0:
+        raise SystemExit("--train-eval-episodes must be positive")
 
     PPO, CheckpointCallback, EvalCallback, Monitor, DummyVecEnv, SubprocVecEnv = _load_sb3()
     repo_root = Path(__file__).resolve().parents[1]
@@ -120,6 +134,11 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         "seed": int(args.seed),
         "n_envs": int(args.n_envs),
         "vec_env": args.vec_env,
+        "train_eval": args.train_eval,
+        "eval_freq": int(args.eval_freq) if args.eval_freq is not None else None,
+        "train_eval_episodes": int(args.train_eval_episodes),
+        "eval_vec_env": args.eval_vec_env,
+        "effective_eval_vec_env": effective_eval_vec_env(args.vec_env, args.eval_vec_env),
         "device": args.device,
         "training_profile": args.training_profile,
         "max_episode_steps": int(args.max_episode_steps),
@@ -141,24 +160,33 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         dummy_vec_env_cls=DummyVecEnv,
         subproc_vec_env_cls=SubprocVecEnv,
     )
-    eval_env = Monitor(
-        HeliAttack2Env(
-            render_mode=None,
-            training_profile=args.training_profile,
-            max_episode_steps=args.max_episode_steps,
-        )
-    )
 
     callbacks = [
         CheckpointCallback(save_freq=5_000, save_path=str(layout.checkpoints_dir), name_prefix="ha2"),
-        EvalCallback(
-            eval_env,
-            best_model_save_path=str(layout.models_dir),
-            log_path=str(layout.reports_dir),
-            eval_freq=max(1_000, args.n_envs),
-            deterministic=True,
-        ),
     ]
+    eval_env = None
+    if args.train_eval == "on":
+        eval_env_name = effective_eval_vec_env(args.vec_env, args.eval_vec_env)
+        eval_env = make_vec_env(
+            vec_env=eval_env_name,
+            n_envs=1,
+            seed=args.seed + 10_000,
+            training_profile=args.training_profile,
+            max_episode_steps=args.max_episode_steps,
+            monitor_cls=Monitor,
+            dummy_vec_env_cls=DummyVecEnv,
+            subproc_vec_env_cls=SubprocVecEnv,
+        )
+        callbacks.append(
+            EvalCallback(
+                eval_env,
+                best_model_save_path=str(layout.models_dir),
+                log_path=str(layout.reports_dir),
+                eval_freq=args.eval_freq if args.eval_freq is not None else max(1_000, args.n_envs),
+                n_eval_episodes=args.train_eval_episodes,
+                deterministic=True,
+            )
+        )
 
     if args.wandb == "on":
         # Set API key in environment BEFORE importing/initializing wandb
@@ -220,6 +248,11 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         f"- seed: `{args.seed}`",
         f"- n_envs: `{args.n_envs}`",
         f"- vec_env: `{args.vec_env}`",
+        f"- train_eval: `{args.train_eval}`",
+        f"- eval_vec_env: `{args.eval_vec_env}`",
+        f"- effective_eval_vec_env: `{effective_eval_vec_env(args.vec_env, args.eval_vec_env)}`",
+        f"- eval_freq: `{args.eval_freq if args.eval_freq is not None else max(1_000, args.n_envs)}`",
+        f"- train_eval_episodes: `{args.train_eval_episodes}`",
         f"- device: `{args.device}`",
         f"- tensorboard_log: `{tensorboard_log}`",
         f"- latest_model: `{layout.models_dir / 'latest.zip'}`",
@@ -231,7 +264,8 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
     write_text_file(layout.summary_path, "\n".join(summary_lines) + "\n", allow_overwrite=True)
 
     env.close()
-    eval_env.close()
+    if eval_env is not None:
+        eval_env.close()
     print(f"Saved latest model to {layout.models_dir / 'latest.zip'}")
     print(f"Experiment directory: {layout.path}")
 

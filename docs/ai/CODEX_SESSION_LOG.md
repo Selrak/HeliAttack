@@ -512,3 +512,37 @@ Improve RL experiment diagnostics by evaluating both best and latest models, gen
 
 ### Recommended Next Action
 - Conduct the 500k RL training run on the Ubuntu workstation using `run_experiment.py`.
+
+## 2026-05-14 17:50 Europe/Paris - VecEnv Eval Controls and Benchmark Modes
+
+### Task Attempted
+Add explicit training-time eval controls and split VecEnv benchmarks into train-only and workflow modes.
+
+### Files Changed
+- `scripts/train_parkour.py`
+- `scripts/run_experiment.py`
+- `scripts/benchmark_vec_envs.py`
+- `tests/test_vec_env_benchmark.py`
+- `docs/ai/CURRENT_STATE.md`
+- `docs/ai/VALIDATION.md`
+- `docs/ai/CODEX_SESSION_LOG.md`
+
+### Validation
+- Passed: py_compile for core files and touched scripts.
+- Passed: `python -m pytest -q` using `.venv` (`58 passed`).
+- Passed: dummy train-only smoke and SubprocVecEnv `--eval-vec-env same` workflow smoke.
+- Passed: train-only benchmark report `reports/vec_env_benchmarks/20260514_174712_vec_env_benchmark.json`.
+- Passed: workflow benchmark report `reports/vec_env_benchmarks/20260514_174755_vec_env_benchmark.json`.
+- Passed: random replay and required scripted trace verification.
+
+### Benchmark Summary
+- Train-only 2048-step smoke: best wall-clock was `dummy n_envs=2` at `6.44s` / `318.0 requested steps/s`.
+- Workflow 2048-step smoke: best wall-clock was `dummy n_envs=1` at `12.29s` / `166.7 requested steps/s`.
+- `--eval-vec-env same` removed the SB3 wrapper mismatch warning in the SubprocVecEnv smoke and benchmark.
+
+### Remaining Risks
+- Tiny 2048-step benchmark results are smoke data only; Charles should run the larger `8192`/multi-repeat benchmark before choosing local defaults.
+- Default remains `dummy`; do not switch to SubprocVecEnv based on current measurements.
+
+### Suggested Next Step
+- Run `python -m scripts.benchmark_vec_envs --mode both --total-timesteps 8192 --repeats 2 --vec-envs dummy subproc --n-envs 1 2 4 8 --eval-vec-env same --wandb off --device cpu`.
