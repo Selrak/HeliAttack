@@ -289,6 +289,61 @@ def main() -> None:
     
     print(f"\nFinal summary written to {root_log_dir}")
     
+    # Create the consolidated pair diagnostic bundle
+    print("\n=== Creating Pair Diagnostic Bundle ===")
+    import zipfile
+    bundle_path = root_log_dir / f"{root_log_dir.name}_diagnostic_bundle.zip"
+    bundled_count = 0
+    with zipfile.ZipFile(bundle_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        # Add summary files
+        for sum_file in ["pair_summary.json", "pair_summary.md"]:
+            sf = root_log_dir / sum_file
+            if sf.exists():
+                zipf.write(sf, arcname=sum_file)
+                bundled_count += 1
+                
+        # Define files to collect from each experiment
+        exp_files = [
+            "config.json",
+            "git_info.txt",
+            "summary.md",
+            "reports/eval_best.json",
+            "reports/eval_latest.json",
+            "replays/best_eval_ep0.jsonl",
+            "replays/latest_eval_ep0.jsonl",
+            "reports/timing/train_timing.json",
+            "reports/timing/train_timing.md",
+            "reports/timing/orchestration_timing.json",
+            "reports/timing/orchestration_timing.md",
+        ]
+        
+        # Add job specific artifacts
+        for mode, data in results.items():
+            for job_name in ["job_a", "job_b"]:
+                job: JobResult = data.get(job_name)
+                if not job: continue
+                
+                # Create a subfolder name based on mode and job label to prevent collisions
+                # If only one mode is used, keep it clean.
+                folder_name = f"{mode}_{job_name}" if len(results) > 1 else job_name
+                
+                # Add stdout/stderr
+                for log_file in [job.stdout_log, job.stderr_log]:
+                    if log_file and Path(log_file).exists():
+                        zipf.write(log_file, arcname=f"{folder_name}/{Path(log_file).name}")
+                        bundled_count += 1
+                
+                # Add experiment artifacts
+                if job.experiment_path:
+                    exp_dir = Path(job.experiment_path)
+                    for rel_file in exp_files:
+                        f_path = exp_dir / rel_file
+                        if f_path.exists():
+                            zipf.write(f_path, arcname=f"{folder_name}/{f_path.name}")
+                            bundled_count += 1
+                            
+    print(f"Created pair bundle {bundle_path} with {bundled_count} files.")
+    
     # Exit status
     failed = False
     for mode in results.values():

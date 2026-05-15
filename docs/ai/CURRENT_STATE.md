@@ -35,8 +35,9 @@ Last updated: 2026-05-14 Europe/Paris
 - `scripts.train_parkour` and `scripts.run_experiment` support optional `--vec-env dummy|subproc`; the default remains `dummy`.
 - `scripts.train_parkour` supports `--train-eval on|off`, `--eval-freq`, `--train-eval-episodes`, and `--eval-vec-env dummy|subproc|same`.
 - `scripts.benchmark_vec_envs` supports `--mode train-only|workflow|both`, records eval wrapper match/warning status, and writes JSON/Markdown reports under `reports/vec_env_benchmarks/`.
-- `ha2_env.py` tracks detailed firing metrics (`player_shot_attempts`, `player_bullets_spawned`, `player_shots_spawn_blocked`) instead of just a generic `gun_shots`.
-- `scripts.evaluate_model` produces an evaluation JSON report that includes aggregate combat diagnostics (min, max, mean, std, sum) in a structured `"metrics"` dictionary, explicit `"rates"` (hit, death, fall, timeout), and `"marginal_action_distributions"`.
+- `ha2_env.py` tracks detailed firing metrics and movement diagnostics (grounded/airborne frames, boost activations, lateral range).
+- `scripts.train_parkour` and `scripts.run_experiment` support `--net-arch` for custom PPO policy network sizes.
+- `scripts.evaluate_model` produces an evaluation JSON report that includes aggregate combat diagnostics, movement metrics, and policy capacity metadata.
 - Evaluation now includes visible enemy-bullet diagnostics, top-10 visible-bullet pressure counters, damage timing, and damage-free streak metrics. Off-screen enemy bullets are excluded from the player-visible defensive denominator.
 - `docs/ai/OBSERVATION_AUDIT.md` documents that `combat_v1` exposes one nearest engine-side enemy bullet, including velocity, but not all visible bullets.
 - Experiments can now be synchronized across machines using WandB Artifacts. `scripts.run_experiment` (with `--wandb on`) automatically uploads the experiment folder, and `scripts.sync_experiment` downloads it to other machines.

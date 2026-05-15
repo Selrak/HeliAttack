@@ -2,284 +2,245 @@
 
 ## Goal
 
-Add PPO policy-capacity controls and boost/jump diagnostics for HA2 RL experiments.
+Finish the HA2 RL instrumentation bugfix pass by fixing the remaining concrete issues found in the current source and smoke artifacts.
 
-The immediate reason is that `combat_bullets_v1` performed worse than matched `combat_v1` at 500k, despite exposing richer visible-bullet information. Before changing rewards or adding a curriculum, we need to test whether the richer 84-dimensional observation needs a larger policy network and whether the current policies are overusing boost/jump in a frantic, poorly timed way.
-
-This task must add experiment knobs and diagnostics only. It must not change simulator mechanics, rewards, observations, action space, or default training behavior.
+This is a small bugfix/validation task. Do not run a new long experiment.
 
 ## Non-goals
 
-Do not change HA2 physics, collision, rendering, Heli behavior, enemy bullet behavior, player movement, replay determinism, or AS parity logic.
+Do not change simulator mechanics, rewards, observations, action space, PPO hyperparameters, training profiles, or replay semantics.
 
-Do not change `combat_v1` observation layout.
+Do not add curriculum logic.
 
-Do not change `combat_bullets_v1` observation layout.
-
-Do not change any reward formula.
-
-Do not add `combat_defense_v1`.
-
-Do not add a no-boost or pure-jump curriculum profile yet.
-
-Do not tune PPO defaults implicitly.
-
-Do not change the default policy architecture unless the user explicitly selects a new architecture.
-
-Do not change the default VecEnv; keep `dummy`.
-
-Do not verify dual-computer sync.
+Do not rerun 500k experiments.
 
 ## Context
 
-Current state:
+Current source/artifact inspection found:
 
-- `combat_v1` is the baseline RL profile with a 37-field observation.
-- `combat_bullets_v1` is now available with an 84-field observation.
-- `combat_bullets_v1` preserves the same reward and mechanics as `combat_v1`.
-- `combat_bullets_v1` replaces the single nearest enemy-bullet fields with a top-10 visible-bullet block.
-- Recent matched 500k runs showed `combat_bullets_v1` did not improve defense and was worse than `combat_v1`.
-- Manual inspection suggests all current candidate models are frantic:
-  - frequent boost/jump;
-  - seemingly useless ducking;
-  - no clear lateral “dancing” with bullets;
-  - little use of the full map width;
-  - no obviously timed evasion pattern.
-- The observation audit says the profiles expose hyperjump charge, but we need to verify and document whether this field is enough to represent boost readiness/reload timing for the policy.
-- It is too early to add reward shaping or curriculum. First, make policy capacity and boost-use behavior measurable.
+1. Movement diagnostic counters are initialized and exported, but most are not incremented in `ha2_env.step()`.
+   - `boost_activations` increments.
+   - `frames_grounded`, `frames_airborne`, `frames_jump_pressed`, `frames_boost_pressed`, `frames_moving_left/right`, etc. remain zero in smoke reports.
+   - This contradicts `marginal_action_distributions`, which show non-zero jump/boost/duck/move usage.
+
+2. `test_rl_diagnostics.py` only checks that movement diagnostic keys exist; it does not verify that counters increase or are coherent.
+
+3. The successful pair smoke still produced `pair_summary.json` with `timing_report_path: null`.
+   - Current source may now contain a partial fix, but it was not validated after the last edit.
+
+4. Parallel job duration reporting is wrong with stagger:
+   - job B duration is measured from job A start (`start_tick_total`) instead of job B start.
+
+5. `config.json` records `net_arch`, but `trainable_parameters` and `activation_fn` are still missing/None in the generated ZIPs.
+   - Likely cause: `train_parkour.py` rewrites `config.json` without `allow_overwrite=True`, inside a silent `except`.
+
+6. Timing PPO itself appears mostly fixed:
+   - `TimedPPO` separates rollout and train update time.
+   - `other_overhead` no longer subtracts overlapping train-time eval.
+   - Keep this design unless a test proves it broken.
 
 ## Files to inspect first
 
 - `ha2_env.py`
 - `scripts/train_parkour.py`
 - `scripts/run_experiment.py`
+- `scripts/run_experiment_pair.py`
+- `scripts/runtime_timing.py`
 - `scripts/evaluate_model.py`
-- `scripts/watch_model.py`
-- `scripts/experiment_utils.py`
-- `tests/test_rl_interface.py`
-- `tests/test_experiment_outputs.py`
-- `docs/ai/OBSERVATION_AUDIT.md`
-- `docs/ai/CURRENT_STATE.md`
-- `docs/ai/VALIDATION.md`
-- `docs/ai/CODEX_SESSION_LOG.md`
-
-## Files likely to modify
-
-Codex should verify from the repo, but likely:
-
-- `scripts/train_parkour.py`
-- `scripts/run_experiment.py`
-- `scripts/evaluate_model.py`
-- `scripts/watch_model.py`, only if model-loading metadata or help text needs updating
-- `ha2_env.py`, only for extra diagnostics exposed in `info`; do not change observation/reward/mechanics
-- tests under `tests/`
-- `docs/ai/OBSERVATION_AUDIT.md`
+- `tests/test_benchmark_orchestration.py`
+- `tests/test_rl_diagnostics.py`
 - `docs/ai/CURRENT_STATE.md`
 - `docs/ai/VALIDATION.md`
 - `docs/ai/CODEX_SESSION_LOG.md`
 
 ## Implementation plan
 
-### 1. Add policy network architecture CLI support
+### 1. Fix movement diagnostics in `ha2_env.step()`
 
-Add a CLI option to `train_parkour.py` and pass it through from `run_experiment.py`:
+Add actual per-step increments.
 
-- `--net-arch 64,64`
-- `--net-arch 128,128`
-- `--net-arch 256,256`
+Use action-based counters:
 
-The option should accept a comma-separated list of positive integers.
+- `frames_jump_pressed`
+- `frames_boost_pressed`
+- `frames_moving_left`
+- `frames_moving_right`
+- `frames_not_moving_horizontally`
 
-Default behavior must remain exactly the current SB3 default unless the user passes `--net-arch`.
+Use actual post-physics state for:
 
-If the current code already sets a custom policy architecture, preserve that as the effective default and document it.
+- `frames_grounded`
+- `frames_airborne`
+- `min_player_x`
+- `max_player_x`
 
-When `--net-arch` is provided, pass the corresponding `policy_kwargs` to PPO.
+Handle boost carefully:
 
-### 2. Record policy configuration in experiment artifacts
+- compute boost readiness before consuming hyperjump charge;
+- increment `frames_boost_ready` from pre-action readiness;
+- increment `frames_boost_pressed_ready` / `frames_boost_pressed_not_ready` from pre-action readiness;
+- increment `boost_activations` only when hyperjump actually triggers.
 
-Record in `config.json` and `summary.md`:
+Do not alter movement mechanics.
 
-- selected policy class;
-- selected `net_arch`, or `default` if not provided;
-- activation function if explicitly set or if easy to extract;
-- approximate trainable parameter count if easy to compute after model creation;
-- observation dimension;
-- training profile.
+### 2. Fix config metadata overwrite
 
-Do not fail if parameter count is difficult, but prefer to include it.
+In `train_parkour.py`, when adding:
 
-### 3. Add policy metadata to evaluation reports
+- `trainable_parameters`
+- `activation_fn`
 
-Add report metadata to `evaluate_model.py` where possible:
+rewrite `config.json` with `allow_overwrite=True`.
 
-- training profile;
-- observation dimension;
-- policy architecture from config, if available;
-- model choice: best/latest;
-- model path.
+Do not silently swallow failures. Replace `except Exception: pass` with at least a warning.
 
-Do not change the metric structure incompatibly.
+Tests must assert that `trainable_parameters` is a positive integer for a smoke run.
 
-### 4. Audit boost/hyperjump observation semantics
+### 3. Fix parallel job duration reporting
 
-Inspect `ha2_env.py` and document exactly what the existing hyperjump/boost-related observation field means.
+In `run_experiment_pair.py`:
 
-Answer in `docs/ai/OBSERVATION_AUDIT.md`:
+- record `start_tick_a`;
+- record `start_tick_b`;
+- compute job A duration as `end_tick_a - start_tick_a`;
+- compute job B duration as `end_tick_b - start_tick_b`;
+- keep `total_parallel_duration` measured from first job start to last job end.
 
-- Is boost/hyperjump readiness exposed?
-- Is cooldown or reload progress exposed?
-- Is the value normalized?
-- Does the value tell the policy when boost is usable now?
-- Does it differ between grounded, airborne, and boost-flight phases?
-- Is there any separate field indicating that the player is currently in boost/hyperjump motion?
-- Is there any separate field indicating standard jump availability or double-jump availability?
+Add a simple test or helper-level assertion so this cannot regress.
 
-Do not change the observation in this task. If the current observation is ambiguous or insufficient, document that as a future design issue.
+### 4. Validate/fix pair timing report paths
 
-### 5. Add boost/jump behavior diagnostics
+Ensure both sequential and parallel modes discover timing reports from `experiment_path`.
 
-Extend evaluation diagnostics with action-state metrics that help distinguish frantic movement from timed movement.
+When timing reports exist, `pair_summary.json` must not leave timing fields null.
 
-Add per-episode and aggregate metrics such as:
+At minimum record:
 
-- fraction of frames grounded;
-- fraction of frames airborne;
-- fraction of frames where boost/hyperjump is ready, if measurable;
-- fraction of frames where boost action is pressed;
-- fraction of frames where boost action is pressed while boost is ready;
-- fraction of frames where boost action is pressed while boost is not ready;
-- number of actual boost/hyperjump activations, if distinguishable from merely pressing the boost action;
-- mean frames between boost activations;
-- fraction of frames where jump is pressed;
-- jump presses while grounded;
-- jump presses while airborne;
-- duck fraction, already present if action marginals exist, but keep or surface it in the summary;
-- horizontal movement distribution, already present if action marginals exist, but keep or surface it in the summary.
+- `timing_report_path`
+- or better:
+  - `train_timing_json`
+  - `train_timing_md`
+  - `orchestration_timing_json`
+  - `orchestration_timing_md`
 
-Use stable names and JSON null where a denominator is zero or a metric is undefined.
+Then rerun the pair smoke after this fix.
 
-Do not change movement mechanics.
+### 5. Tighten bundle validation
 
-### 6. Add lateral movement / map-width diagnostics
+The diagnostic bundle should include all existing relevant artifacts:
 
-Add simple diagnostics to tell whether the model uses the map width or stays in a narrow band:
+- `config.json`
+- `git_info.txt`
+- `summary.md`
+- `eval_best.json` when produced
+- `eval_latest.json`
+- `best_eval_ep0.jsonl` when produced
+- `latest_eval_ep0.jsonl`
+- `train_timing.json`
+- `train_timing.md`
+- `orchestration_timing.json`
+- `orchestration_timing.md`
 
-- min player x during episode;
-- max player x during episode;
-- player x range;
-- mean player x;
-- fraction of frames moving left;
-- fraction of frames moving right;
-- fraction of frames with no horizontal movement;
-- optionally fraction of frames near left/right map boundaries if those bounds are already reliable.
+Existence checks are fine because small runs with `--train-eval off` may not produce `best.zip`, `eval_best.json`, or `best_eval_ep0.jsonl`.
 
-Do not alter camera or map logic.
+### 6. Strengthen tests
 
-### 7. Extend summary.md compact comparison
+Update tests so they fail on the current bugs.
 
-Extend the best/latest summary table with compact rows for:
+Required tests:
 
-- net architecture;
-- observation dimension;
-- mean player x range;
-- grounded fraction;
-- airborne fraction;
-- boost action fraction;
-- boost-ready fraction, if available;
-- boost-pressed-while-ready fraction, if available;
-- actual boost activations per episode, if available;
-- jump action fraction;
-- duck action fraction.
+- direct env smoke:
+  - reset `HeliAttack2Env(training_profile="combat_v1")`;
+  - run forced actions with move/jump/duck/boost;
+  - verify movement counters are not all zero;
+  - verify `frames_grounded + frames_airborne` is close to number of steps;
+  - verify movement left/right counters reflect forced move actions.
 
-Keep this readable. Do not dump every diagnostic into summary.md.
+- evaluation/report smoke:
+  - run a tiny `run_experiment`;
+  - verify movement metrics in `eval_latest.json` are numeric and plausible;
+  - verify they are not all zero when action marginals show non-zero actions.
 
-### 8. Add tests
+- bundle smoke:
+  - verify ZIP includes timing files and latest eval/replay;
+  - best eval/replay optional unless produced.
 
-Tests should verify:
+- pair smoke:
+  - verify pair summary has non-null timing report fields after a parallel run;
+  - verify job A/B durations are individually measured from their own starts;
+  - verify seed A and seed B remain explicit.
 
-- `--net-arch 128,128` is parsed correctly.
-- invalid `--net-arch` values fail clearly.
-- `run_experiment.py` passes `--net-arch` through to training.
-- experiment `config.json` records the selected net architecture.
-- summary/report metadata includes the selected net architecture.
-- default behavior remains unchanged when `--net-arch` is omitted.
-- `combat_v1` observation shape remains 37.
-- `combat_bullets_v1` observation shape remains 84.
-- boost/jump diagnostic keys are present in evaluation reports.
-- diagnostics handle episodes with no boost activations cleanly.
-- existing replay/scripted trace validation still passes.
+- config metadata:
+  - verify `net_arch == "128,128"` or `"32,32"` in smoke config;
+  - verify `trainable_parameters` is present and > 0;
+  - verify `activation_fn` is present when SB3 exposes it.
 
-### 9. Do not train a real model in this task
-
-Only run smoke training.
-
-The matched 500k experiments will be run after this task.
+Remove or replace placeholder tests that only contain `pass`.
 
 ## Validation
 
-Run from repo root:
+Run with the venv Python explicitly on Windows:
 
-- `python -m py_compile ha2_env.py ha2_replay.py extract_ha2_data.py ha2_constants.py`
-- `python -m py_compile scripts/experiment_utils.py scripts/train_parkour.py scripts/evaluate_model.py scripts/watch_model.py scripts/run_experiment.py scripts/benchmark_vec_envs.py`
-- `python -m pytest`
-- `python -m scripts.record_random_replay --steps 300 --out replays/smoke.jsonl`
-- `python -m scripts.verify_replay replays/smoke.jsonl`
-- `python -m scripts.record_scripted_trace --scenario all`
-- `python -m scripts.verify_replay reports/parity_traces/walk_right_120.jsonl`
-- `python -m scripts.verify_replay reports/parity_traces/fire_right_60.jsonl`
-- `python -m scripts.verify_replay reports/parity_traces/fire_at_heli_180.jsonl`
-- `python -m scripts.verify_replay reports/parity_traces/heli_shoots_hero_240.jsonl`
-- `python -m scripts.verify_replay reports/parity_traces/kill_heli_respawn_600.jsonl`
-- `python -c "from stable_baselines3.common.env_checker import check_env; from ha2_env import HeliAttack2Env; env=HeliAttack2Env(render_mode=None, training_profile='combat_bullets_v1', max_episode_steps=300); check_env(env, warn=True); env.close(); print('check_env combat_bullets_v1 passed')"`
-- `python -m scripts.run_experiment --training-profile combat_bullets_v1 --total-timesteps 1000 --n-envs 1 --vec-env dummy --wandb off --eval-episodes 1 --save-replays --net-arch 128,128`
+- `.venv\Scripts\python.exe -m py_compile ha2_env.py scripts/runtime_timing.py scripts/train_parkour.py scripts/run_experiment.py scripts/run_experiment_pair.py scripts/evaluate_model.py`
+- `.venv\Scripts\python.exe -m pytest`
 
-Optional, if quick:
+Run a fresh single-job smoke:
 
-- `python -m scripts.run_experiment --training-profile combat_v1 --total-timesteps 1000 --n-envs 1 --vec-env dummy --wandb off --eval-episodes 1 --save-replays --net-arch 128,128`
+- `.venv\Scripts\python.exe -m scripts.run_experiment --training-profile combat_bullets_v1 --total-timesteps 1000 --n-envs 1 --vec-env dummy --wandb off --train-eval off --eval-episodes 1 --save-replays --timing-profile on --torch-num-threads 2 --net-arch 128,128`
 
-## Manual checks
+Run a fresh pair smoke after all fixes:
 
-No GUI check is required.
+- `.venv\Scripts\python.exe -m scripts.run_experiment_pair --mode parallel --profile-a combat_v1 --profile-b combat_bullets_v1 --total-timesteps 1000 --n-envs 1 --vec-env dummy --wandb off --train-eval off --eval-episodes 1 --save-replays --timing-profile on --threads-per-job 2 --net-arch 128,128 --stagger-seconds 0 --seed 0 --seed-b 0`
 
-After the task, Charles should run matched experiments, for example:
+Then inspect and report:
 
-- `python -m scripts.run_experiment --training-profile combat_v1 --total-timesteps 500000 --n-envs 4 --vec-env dummy --wandb off --train-eval on --eval-freq 50000 --train-eval-episodes 2 --eval-episodes 10 --save-replays --net-arch 128,128`
+- pair smoke path;
+- experiment paths;
+- pair timing paths;
+- ZIP contents for both jobs;
+- movement metric values from both `eval_latest.json`;
+- action marginal distributions from both `eval_latest.json`;
+- training timing split from both `train_timing.json`;
+- `config.json` policy metadata;
+- git status.
 
-- `python -m scripts.run_experiment --training-profile combat_bullets_v1 --total-timesteps 500000 --n-envs 4 --vec-env dummy --wandb off --train-eval on --eval-freq 50000 --train-eval-episodes 2 --eval-episodes 10 --save-replays --net-arch 128,128`
+Run replay validation only if replay-affecting state or mechanics changed unexpectedly:
 
-Then compare against the previous matched 64-ish/default policy runs.
+- `.venv\Scripts\python.exe -m scripts.record_random_replay --steps 300 --out replays/smoke.jsonl`
+- `.venv\Scripts\python.exe -m scripts.verify_replay replays/smoke.jsonl`
+- `.venv\Scripts\python.exe -m scripts.record_scripted_trace --scenario all`
+- `.venv\Scripts\python.exe -m scripts.verify_replay reports/parity_traces/walk_right_120.jsonl`
+- `.venv\Scripts\python.exe -m scripts.verify_replay reports/parity_traces/fire_right_60.jsonl`
+- `.venv\Scripts\python.exe -m scripts.verify_replay reports/parity_traces/fire_at_heli_180.jsonl`
+- `.venv\Scripts\python.exe -m scripts.verify_replay reports/parity_traces/heli_shoots_hero_240.jsonl`
+- `.venv\Scripts\python.exe -m scripts.verify_replay reports/parity_traces/kill_heli_respawn_600.jsonl`
 
 ## Acceptance criteria
 
-The task is complete only if:
+Complete only if:
 
-- `--net-arch` exists and works.
-- Default behavior remains unchanged when `--net-arch` is omitted.
-- Selected net architecture is recorded in experiment config and summary.
-- Evaluation report metadata includes policy/profile/observation information where available.
-- Boost/hyperjump observation semantics are documented.
-- Boost/jump/lateral movement diagnostics are present in evaluation reports.
-- `combat_v1` observation shape remains unchanged.
-- `combat_bullets_v1` observation shape remains unchanged.
-- No reward shaping is introduced.
-- No simulator mechanics are changed.
-- Existing tests and replay validations pass.
-- A 1000-step `combat_bullets_v1 --net-arch 128,128` smoke experiment succeeds.
+- movement counters increment correctly in direct env stepping;
+- fresh eval reports no longer show impossible all-zero movement diagnostics;
+- action marginals and movement diagnostics are not contradictory;
+- pair summary timing paths are non-null after a fresh post-fix pair smoke;
+- parallel job durations are measured from each job’s own start time;
+- diagnostic ZIPs include timing files and latest eval/replay;
+- config records `net_arch`, `trainable_parameters`, and `activation_fn` when available;
+- timing reports still have `train_update_count == rollout_count`;
+- `other_or_unclassified_training_seconds >= 0`;
+- all tests pass;
+- no simulator mechanics/reward/observation/action-space/replay behavior is intentionally changed.
 
 ## Stop conditions
 
-Stop and report instead of improvising if:
+Stop and report if:
 
-- current policy architecture is not accessible or is already custom in a non-obvious way;
-- `--net-arch` requires a larger training-script refactor than expected;
-- boost readiness/reload semantics are unclear in the simulator state;
-- actual boost activation cannot be distinguished from boost button press without changing mechanics;
-- adding diagnostics risks changing replay state hashes;
-- observation shapes change unexpectedly;
-- reward or observation changes seem necessary;
-- tests become nondeterministic;
-- any replay verification changes unexpectedly.
+- making movement diagnostics reliable would require changing movement mechanics;
+- timing report paths cannot be discovered robustly from experiment paths;
+- config metadata cannot be recorded without broader refactor;
+- model saving fails again with `TimedPPO`;
+- replay hashes change unexpectedly;
+- tests become long or flaky.
 
 ## Required Codex session log
 
@@ -288,18 +249,21 @@ Update:
 - `docs/ai/CURRENT_STATE.md`
 - `docs/ai/VALIDATION.md`
 - `docs/ai/CODEX_SESSION_LOG.md`
-- `docs/ai/OBSERVATION_AUDIT.md`
 
-The log must include:
+Log:
 
 - files changed;
 - commands run;
 - pass/fail result;
-- default policy architecture behavior;
-- how `--net-arch` is parsed and recorded;
-- final observation dimensions for `combat_v1` and `combat_bullets_v1`;
-- boost/hyperjump observation audit summary;
-- boost/jump/lateral diagnostics added;
-- smoke experiment path;
+- direct movement diagnostic test result;
+- single-job smoke path;
+- pair smoke path;
+- pair timing paths;
+- ZIP contents confirmation;
+- movement metric values;
+- config metadata values;
+- timing split values;
 - remaining risks;
 - suggested next step.
+
+Le point le plus urgent est vraiment le compteur mouvement : tant que frames_* restent à zéro, on ne peut pas interpréter correctement les politiques frénétiques ni décider proprement entre “gros réseau”, “top-3/top-5 bullets” ou “curriculum mouvement avec attaque scriptée”.
