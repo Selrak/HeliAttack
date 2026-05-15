@@ -785,3 +785,31 @@ Fix the RL experiment reporting and instrumentation issues discovered after the 
 
 ### Suggested Next Step
 - Review the finalized reports from the 500k parallel run.
+
+## 2026-05-15 18:30 Europe/Paris - Correct PPO Update Timing
+
+### Task Attempted
+Fix the PPO runtime timing instrumentation. The previous `TimingCallback` incorrectly measured the entire training session as "PPO Update", leading to a `train_update_count` of 1, an exaggerated `train_update_total`, and negative unclassified overhead.
+
+### Files Changed or Created
+- Updated `scripts/runtime_timing.py` to restore the explicit monkey-patching of `model.train` and `model.collect_rollouts` (`wrap_ppo_timing`).
+- Fixed `unwrap_ppo_timing` to use `del model.__dict__["..."]` instead of re-assigning the original method, properly restoring class-level method lookup and preventing pickling errors during `model.save()`.
+- Updated `scripts/train_parkour.py` to use `wrap_ppo_timing` and `unwrap_ppo_timing` again.
+- Updated `tests/test_benchmark_orchestration.py` to add strict assertions enforcing `train_update_count == rollout_count` and `other_or_unclassified >= 0`.
+
+### Repository Facts Discovered
+- In Python, monkey-patching an instance method injects it into `__dict__`. Restoring the original bound method into `__dict__` causes Cloudpickle to fail with `cannot pickle 'EncodedFile' object` (if the model contains complex state like loggers) because the bound method captures `self`. The correct unpatching technique is to `del` the key from `__dict__` so Python falls back to the class-level method definition.
+
+### Commands Run
+- `python -m pytest tests/test_benchmark_orchestration.py` (Passed 4/4)
+
+### Validation Result
+- Passed: `other_or_unclassified` is now consistently positive.
+- Passed: `train_update_count` matches `rollout_count` as expected for PPO.
+- Passed: The model successfully saves (`pickles`) without throwing errors.
+
+### Architectural Discrepancies
+- None.
+
+### Suggested Next Step
+- Wait for the 500k parallel run to finish and analyze its detailed timing report.
