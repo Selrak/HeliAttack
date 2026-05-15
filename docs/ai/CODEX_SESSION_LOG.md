@@ -879,3 +879,31 @@ Fix the remaining HA2 RL reporting/instrumentation bugs found by source inspecti
 
 ### Suggested Next Step
 - Lancer de nouvelles expérimentations RL ou analyser les résultats existants.
+
+## 2026-05-15 22:30 Europe/Paris - Fix Parallel Job Duration Reporting
+
+### Task Attempted
+Fix the per-job `duration_seconds` reporting in `scripts/run_experiment_pair.py` for parallel runs with non-zero `--stagger-seconds`.
+
+### Files Changed or Created
+- Updated `scripts/run_experiment_pair.py` to record `start_tick_a` and `start_tick_b` individually immediately before launching each respective job, and compute each job's duration based on its own start tick rather than the global `start_tick_total`.
+- Added `test_parallel_staggered_durations` to `tests/test_benchmark_orchestration.py` to verify that Job B's duration strictly measures its own runtime and does not include the `--stagger-seconds` delay.
+
+### Repository Facts Discovered
+- In parallel mode, the global `start_tick_total` was previously being used to compute the duration of both Job A and Job B, leading to Job B's duration artificially inflating by the stagger delay.
+
+### Commands Run
+- `python -m pytest tests/test_benchmark_orchestration.py`
+
+### Validation Result
+- Passed: `duration_seconds` for Job A and Job B now correctly reflect their independent running times.
+- Passed: `total_parallel_duration` continues to correctly represent the total wall-clock time from the first job's launch to the last job's completion.
+
+### Architectural Discrepancies
+- None.
+
+### Remaining Risks
+- None.
+
+### Suggested Next Step
+- Analyze the finalized reports from the 500k parallel runs.
