@@ -244,6 +244,25 @@ class HeliAttack2Env(gym.Env):
         self.player_shot_attempts = 0
         self.player_bullets_spawned = 0
         self.player_shots_spawn_blocked = 0
+
+        # Movement Diagnostics
+        self.frames_grounded = 0
+        self.frames_airborne = 0
+        self.frames_boost_ready = 0
+        self.frames_boost_pressed = 0
+        self.frames_boost_pressed_ready = 0
+        self.frames_boost_pressed_not_ready = 0
+        self.boost_activations = 0
+        self.frames_since_last_boost = 0
+        self.frames_between_boosts = []
+        self.frames_jump_pressed = 0
+        self.jump_presses_grounded = 0
+        self.jump_presses_airborne = 0
+        self.frames_moving_left = 0
+        self.frames_moving_right = 0
+        self.frames_not_moving_horizontally = 0
+        self.min_player_x = self._x if hasattr(self, "_x") else 0.0
+        self.max_player_x = self._x if hasattr(self, "_x") else 0.0
         self.gun_rotation = 0.0
         self.aim_rotation = 0.0
         self.bullets: list[dict[str, Any]] = []
@@ -434,6 +453,25 @@ class HeliAttack2Env(gym.Env):
         self.player_shot_attempts = 0
         self.player_bullets_spawned = 0
         self.player_shots_spawn_blocked = 0
+
+        # Movement Diagnostics
+        self.frames_grounded = 0
+        self.frames_airborne = 0
+        self.frames_boost_ready = 0
+        self.frames_boost_pressed = 0
+        self.frames_boost_pressed_ready = 0
+        self.frames_boost_pressed_not_ready = 0
+        self.boost_activations = 0
+        self.frames_since_last_boost = 0
+        self.frames_between_boosts = []
+        self.frames_jump_pressed = 0
+        self.jump_presses_grounded = 0
+        self.jump_presses_airborne = 0
+        self.frames_moving_left = 0
+        self.frames_moving_right = 0
+        self.frames_not_moving_horizontally = 0
+        self.min_player_x = self._x if hasattr(self, "_x") else 0.0
+        self.max_player_x = self._x if hasattr(self, "_x") else 0.0
         self.gun_rotation = 0.0
         self.aim_rotation = 0.0
         self.bullets = []
@@ -2215,6 +2253,26 @@ class HeliAttack2Env(gym.Env):
             defensive = self._defensive_diagnostics_info()
             info["defensive_diagnostics"] = defensive
             info.update(defensive)
+            
+            movement = {
+                "frames_grounded": self.frames_grounded,
+                "frames_airborne": self.frames_airborne,
+                "frames_boost_ready": self.frames_boost_ready,
+                "frames_boost_pressed": self.frames_boost_pressed,
+                "frames_boost_pressed_ready": self.frames_boost_pressed_ready,
+                "frames_boost_pressed_not_ready": self.frames_boost_pressed_not_ready,
+                "boost_activations": self.boost_activations,
+                "frames_jump_pressed": self.frames_jump_pressed,
+                "jump_presses_grounded": self.jump_presses_grounded,
+                "jump_presses_airborne": self.jump_presses_airborne,
+                "frames_moving_left": self.frames_moving_left,
+                "frames_moving_right": self.frames_moving_right,
+                "frames_not_moving_horizontally": self.frames_not_moving_horizontally,
+                "min_player_x": self.min_player_x,
+                "max_player_x": self.max_player_x,
+            }
+            info["movement_diagnostics"] = movement
+            info.update(movement)
         return info
 
     def close(self) -> None:

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
+import ha2_constants as const
 from ha2_env import COMBAT_V1_OBS_SIZE, HeliAttack2Env
 from ha2_replay import JsonlReplayWriter, load_replay, verify_replay_file
 
@@ -116,6 +119,60 @@ def test_combat_v1_player_damage_penalty_component():
     env.close()
 
 
+def test_combat_v1_defensive_info_keys_exist():
+    env = HeliAttack2Env(render_mode=None, training_profile="combat_v1", spawn_default_heli=False)
+    env.reset(seed=0)
+    _obs, _reward, _terminated, _truncated, info = env.step(IDLE_ACTION)
+    assert "defensive_diagnostics" in info
+    for key in [
+        "visible_enemy_bullets_current",
+        "visible_enemy_bullets_seen_unique",
+        "visible_enemy_bullet_hit_rate_against_player",
+        "damage_event_frames",
+        "longest_damage_free_streak",
+    ]:
+        assert key in info
+        assert key in info["defensive_diagnostics"]
+    env.close()
+
+
+def test_visible_enemy_bullet_count_excludes_offscreen_bullets():
+    env = HeliAttack2Env(render_mode=None, training_profile="combat_v1", spawn_default_heli=False)
+    env.reset(seed=0)
+    env._add_enemy_bullet(20.0, 220.0, 0.0, 0.0)
+    env._add_enemy_bullet(const.SCREEN_WIDTH + 20.0, 220.0, 0.0, 0.0)
+    _obs, _reward, _terminated, _truncated, info = env.step(IDLE_ACTION)
+    assert info["visible_enemy_bullets_current"] == 1
+    assert info["visible_enemy_bullets_seen_unique"] == 1
+    assert info["engine_enemy_bullets_active"] == 2
+    env.close()
+
+
+def test_visible_enemy_bullet_top10_diagnostics():
+    env = HeliAttack2Env(render_mode=None, training_profile="combat_v1", spawn_default_heli=False)
+    env.reset(seed=0)
+    for index in range(12):
+        env._add_enemy_bullet(20.0 + index * 10.0, 220.0, 0.0, 0.0)
+    _obs, _reward, _terminated, _truncated, info = env.step(IDLE_ACTION)
+    assert info["visible_enemy_bullets_current"] == 12
+    assert info["visible_enemy_bullets_over_top10_frames"] == 1
+    assert info["max_visible_enemy_bullets_over_top10_excess"] == 2
+    env.close()
+
+
+def test_damage_frames_recorded_for_enemy_bullet_hit():
+    env = HeliAttack2Env(render_mode=None, training_profile="combat_v1", spawn_default_heli=False)
+    env.reset(seed=0)
+    left, top, right, bottom = env._player_hit_rect()
+    env._add_enemy_bullet((left + right) / 2, (top + bottom) / 2, 0.0, 0.0)
+    _obs, _reward, _terminated, _truncated, info = env.step(IDLE_ACTION)
+    assert info["damage_event_frames"] == [1]
+    assert info["damage_events"] == 1
+    assert info["time_to_first_damage"] == 1
+    assert info["damage_free_episode"] is False
+    env.close()
+
+
 def test_combat_v1_replay_header_verifies_with_profile(tmp_path):
     path = tmp_path / "combat_v1.jsonl"
     env = HeliAttack2Env(
@@ -151,3 +208,11 @@ def test_combat_v1_sb3_env_checker():
         check_env(env, warn=True)
     finally:
         env.close()
+
+
+def test_observation_audit_documents_bullet_limitations():
+    text = (Path("docs/ai/OBSERVATION_AUDIT.md")).read_text(encoding="utf-8")
+    assert "37" in text
+    assert "nearest enemy bullet" in text
+    assert "velocity" in text
+    assert "one" in text.lower() or "1" in text

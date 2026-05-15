@@ -107,11 +107,20 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
     parser.add_argument("--resume-from", type=Path, default=None)
     parser.add_argument("--no-wandb-finish", action="store_true", help="Skip artifact upload and wandb finish (for orchestration).")
     parser.add_argument("--mirror-root-models", action="store_true")
+    parser.add_argument("--net-arch", type=str, default=None, help="Comma-separated list of hidden layer sizes (e.g. '128,128')")
     args = parser.parse_args(args_list)
     if args.eval_freq is not None and args.eval_freq <= 0:
         raise SystemExit("--eval-freq must be positive")
     if args.train_eval_episodes <= 0:
         raise SystemExit("--train-eval-episodes must be positive")
+
+    policy_kwargs = {}
+    if args.net_arch:
+        try:
+            net_arch = [int(x.strip()) for x in args.net_arch.split(",")]
+            policy_kwargs["net_arch"] = dict(pi=net_arch, vf=net_arch)
+        except ValueError as exc:
+            raise SystemExit(f"Invalid --net-arch format. Expected comma-separated integers, got: {args.net_arch}") from exc
 
     PPO, CheckpointCallback, EvalCallback, Monitor, DummyVecEnv, SubprocVecEnv = _load_sb3()
     repo_root = Path(__file__).resolve().parents[1]
@@ -223,7 +232,19 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
             verbose=1,
             tensorboard_log=str(tensorboard_log),
             device=args.device,
+            policy_kwargs=policy_kwargs if policy_kwargs else None,
         )
+
+    # Try to extract parameter count and activation fn to update config
+    try:
+        total_params = sum(p.numel() for p in model.policy.parameters() if p.requires_grad)
+        config["trainable_parameters"] = total_params
+        if hasattr(model.policy, "activation_fn"):
+            config["activation_fn"] = model.policy.activation_fn.__name__
+        write_json_file(layout.config_path, config)
+    except Exception:
+        pass
+
     model.learn(total_timesteps=args.total_timesteps, callback=callbacks)
     latest_model = layout.models_dir / "latest"
     model.save(latest_model)

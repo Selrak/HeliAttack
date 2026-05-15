@@ -83,13 +83,16 @@ def build_evaluation_report(
     visible_hits_sum = sum(row["visible_enemy_bullets_hit_player"] for row in stats)
     over_top10_frames_sum = sum(row["visible_enemy_bullets_over_top10_frames"] for row in stats)
 
-    return {
+    report = {
         "experiment": str(layout.path) if layout is not None else None,
         "model": str(model_path),
         "model_choice": effective_model_choice,
         "training_profile": training_profile,
         "max_episode_steps": max_episode_steps,
         "episodes": episodes,
+        "net_arch": config.get("net_arch") if layout and layout.config_path.exists() and "config" in locals() else None,
+        "activation_fn": config.get("activation_fn") if layout and layout.config_path.exists() and "config" in locals() else None,
+        "trainable_parameters": config.get("trainable_parameters") if layout and layout.config_path.exists() and "config" in locals() else None,
         "metrics": {
             "reward": aggregate_metric(stats, "reward"),
             "length": aggregate_metric(stats, "length"),
@@ -100,6 +103,19 @@ def build_evaluation_report(
             "player_shots_spawn_blocked": aggregate_metric(stats, "player_shots_spawn_blocked"),
             "player_damage": aggregate_metric(stats, "total_player_damage"),
             "enemy_bullet_hits": aggregate_metric(stats, "enemy_bullet_hits"),
+            "frames_grounded": aggregate_metric(stats, "frames_grounded"),
+            "frames_airborne": aggregate_metric(stats, "frames_airborne"),
+            "frames_boost_ready": aggregate_metric(stats, "frames_boost_ready"),
+            "frames_boost_pressed": aggregate_metric(stats, "frames_boost_pressed"),
+            "frames_boost_pressed_ready": aggregate_metric(stats, "frames_boost_pressed_ready"),
+            "frames_boost_pressed_not_ready": aggregate_metric(stats, "frames_boost_pressed_not_ready"),
+            "boost_activations": aggregate_metric(stats, "boost_activations"),
+            "frames_jump_pressed": aggregate_metric(stats, "frames_jump_pressed"),
+            "jump_presses_grounded": aggregate_metric(stats, "jump_presses_grounded"),
+            "jump_presses_airborne": aggregate_metric(stats, "jump_presses_airborne"),
+            "frames_moving_left": aggregate_metric(stats, "frames_moving_left"),
+            "frames_moving_right": aggregate_metric(stats, "frames_moving_right"),
+            "frames_not_moving_horizontally": aggregate_metric(stats, "frames_not_moving_horizontally"),
             "final_score": aggregate_metric(stats, "final_score"),
             "max_score": aggregate_metric(stats, "max_score"),
             "visible_enemy_bullets_seen_unique": aggregate_metric(stats, "visible_enemy_bullets_seen_unique"),
@@ -136,6 +152,7 @@ def build_evaluation_report(
         "episodes_detail": stats,
         "replay_paths": replay_paths,
     }
+    return report
 
 
 def main(args_list: list[str] | None = None) -> None:

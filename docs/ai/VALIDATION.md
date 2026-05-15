@@ -39,6 +39,7 @@ Experiment smoke output:
 - `experiments/<created_experiment>/models/checkpoints/`
 - `experiments/<created_experiment>/reports/eval_latest.json`
 - `experiments/<created_experiment>/reports/eval_best.json`
+- Evaluation reports should include visible enemy-bullet metrics, damage timing metrics, and defensive rates.
 - `experiments/<created_experiment>/replays/latest_eval_ep0.jsonl`
 - `experiments/<created_experiment>/replays/best_eval_ep0.jsonl`
 - `experiments/<created_experiment>/tensorboard/`

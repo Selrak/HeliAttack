@@ -1,35 +1,32 @@
+# NEXT_CODEX_TASK.md
+
 ## Goal
 
-Improve the VecEnv benchmark and training/evaluation controls so we can accurately measure HA2 PPO wall-clock speed before moving on to defensive diagnostics.
+Add PPO policy-capacity controls and boost/jump diagnostics for HA2 RL experiments.
 
-The previous benchmark showed that:
+The immediate reason is that `combat_bullets_v1` performed worse than matched `combat_v1` at 500k, despite exposing richer visible-bullet information. Before changing rewards or adding a curriculum, we need to test whether the richer 84-dimensional observation needs a larger policy network and whether the current policies are overusing boost/jump in a frantic, poorly timed way.
 
-- `DummyVecEnv` works and is currently fastest at `n_envs=4` in wall-clock time.
-- `SubprocVecEnv` works on Windows, but is not faster in the measured 8192-step benchmark.
-- SB3-reported fps can be misleading compared with measured wall-clock steps/s.
-- Subproc training currently triggers an SB3 warning because the training env is `SubprocVecEnv` while the training-time eval env is `DummyVecEnv`.
-
-This task should make the benchmark answer three separate questions:
-
-1. How fast is pure PPO training with no training-time evaluation?
-2. How expensive is training-time evaluation?
-3. How fast is the normal workflow that includes periodic EvalCallback and best-model saving?
-
-Do not add defensive metrics yet.
+This task must add experiment knobs and diagnostics only. It must not change simulator mechanics, rewards, observations, action space, or default training behavior.
 
 ## Non-goals
 
-Do not change HA2 simulator physics, collision, rendering, player movement, Heli behavior, bullet behavior, reward formula, observations, action space, replay determinism, or AS parity logic.
+Do not change HA2 physics, collision, rendering, Heli behavior, enemy bullet behavior, player movement, replay determinism, or AS parity logic.
 
-Do not add defensive diagnostics in this task.
+Do not change `combat_v1` observation layout.
 
-Do not add reward shaping.
+Do not change `combat_bullets_v1` observation layout.
+
+Do not change any reward formula.
 
 Do not add `combat_defense_v1`.
 
-Do not switch the default vector env. Keep `dummy` as the default.
+Do not add a no-boost or pure-jump curriculum profile yet.
 
-Do not optimize CUDA in this task.
+Do not tune PPO defaults implicitly.
+
+Do not change the default policy architecture unless the user explicitly selects a new architecture.
+
+Do not change the default VecEnv; keep `dummy`.
 
 Do not verify dual-computer sync.
 
@@ -37,31 +34,31 @@ Do not verify dual-computer sync.
 
 Current state:
 
-- `training_profile="combat_v1"` is the current RL profile.
-- `scripts.run_experiment` is the canonical training/evaluation entry point.
-- `scripts.train_parkour` and `scripts.run_experiment` now support `--vec-env dummy|subproc`.
-- `scripts.benchmark_vec_envs` writes JSON/Markdown reports under `reports/vec_env_benchmarks/`.
-- Current default remains `dummy`.
-- Larger benchmark result with `8192` timesteps, two repeats:
-  - `dummy`, `n_envs=4`: about `323-325` computed steps/s.
-  - `subproc`, `n_envs=4`: about `306-308` computed steps/s.
-  - `dummy`, `n_envs=8`: about `255-264` computed steps/s.
-  - `subproc`, `n_envs=8`: about `247-248` computed steps/s.
-- SB3 fps was much higher for `subproc n_envs=8`, but measured wall-clock was worse, so benchmark reports must prioritize wall-clock.
-- SB3 warning observed with subproc:
-  - training env: `SubprocVecEnv`
-  - eval env: `DummyVecEnv`
-  - training still completes, but the warning means the benchmark is not clean.
+- `combat_v1` is the baseline RL profile with a 37-field observation.
+- `combat_bullets_v1` is now available with an 84-field observation.
+- `combat_bullets_v1` preserves the same reward and mechanics as `combat_v1`.
+- `combat_bullets_v1` replaces the single nearest enemy-bullet fields with a top-10 visible-bullet block.
+- Recent matched 500k runs showed `combat_bullets_v1` did not improve defense and was worse than `combat_v1`.
+- Manual inspection suggests all current candidate models are frantic:
+  - frequent boost/jump;
+  - seemingly useless ducking;
+  - no clear lateral “dancing” with bullets;
+  - little use of the full map width;
+  - no obviously timed evasion pattern.
+- The observation audit says the profiles expose hyperjump charge, but we need to verify and document whether this field is enough to represent boost readiness/reload timing for the policy.
+- It is too early to add reward shaping or curriculum. First, make policy capacity and boost-use behavior measurable.
 
 ## Files to inspect first
 
+- `ha2_env.py`
 - `scripts/train_parkour.py`
 - `scripts/run_experiment.py`
-- `scripts/benchmark_vec_envs.py`
 - `scripts/evaluate_model.py`
+- `scripts/watch_model.py`
 - `scripts/experiment_utils.py`
-- `tests/test_vec_env_benchmark.py`
+- `tests/test_rl_interface.py`
 - `tests/test_experiment_outputs.py`
+- `docs/ai/OBSERVATION_AUDIT.md`
 - `docs/ai/CURRENT_STATE.md`
 - `docs/ai/VALIDATION.md`
 - `docs/ai/CODEX_SESSION_LOG.md`
@@ -72,241 +69,237 @@ Codex should verify from the repo, but likely:
 
 - `scripts/train_parkour.py`
 - `scripts/run_experiment.py`
-- `scripts/benchmark_vec_envs.py`
-- `tests/test_vec_env_benchmark.py`
-- possibly `tests/test_experiment_outputs.py`
+- `scripts/evaluate_model.py`
+- `scripts/watch_model.py`, only if model-loading metadata or help text needs updating
+- `ha2_env.py`, only for extra diagnostics exposed in `info`; do not change observation/reward/mechanics
+- tests under `tests/`
+- `docs/ai/OBSERVATION_AUDIT.md`
 - `docs/ai/CURRENT_STATE.md`
 - `docs/ai/VALIDATION.md`
 - `docs/ai/CODEX_SESSION_LOG.md`
 
 ## Implementation plan
 
-1. Inspect how `train_parkour.py` currently creates:
-   - training env;
-   - training-time evaluation env for `EvalCallback`;
-   - evaluation frequency;
-   - number of training-time eval episodes;
-   - model saving/checkpointing.
+### 1. Add policy network architecture CLI support
 
-2. Add explicit training-time evaluation controls to `train_parkour.py`.
+Add a CLI option to `train_parkour.py` and pass it through from `run_experiment.py`:
 
-   Add CLI options:
+- `--net-arch 64,64`
+- `--net-arch 128,128`
+- `--net-arch 256,256`
 
-   ```text
-   --train-eval on|off
-   --eval-freq <int>
-   --train-eval-episodes <int>
-   --eval-vec-env dummy|subproc|same
+The option should accept a comma-separated list of positive integers.
 
-Requirements:
+Default behavior must remain exactly the current SB3 default unless the user passes `--net-arch`.
 
-Default behavior should preserve current behavior as closely as possible.
---train-eval off must disable EvalCallback entirely.
---eval-vec-env same should use the same VecEnv class as training.
---eval-vec-env dummy should force DummyVecEnv for eval.
---eval-vec-env subproc should force SubprocVecEnv for eval.
-If --vec-env subproc --eval-vec-env same, the SB3 warning about mismatched env types should disappear.
-If keeping DummyVecEnv eval with SubprocVecEnv training, the benchmark report should record that wrapper types differ.
+If the current code already sets a custom policy architecture, preserve that as the effective default and document it.
 
-Add equivalent pass-through options to run_experiment.py.
+When `--net-arch` is provided, pass the corresponding `policy_kwargs` to PPO.
 
-run_experiment.py should pass the new training-eval arguments through to train_parkour.py.
+### 2. Record policy configuration in experiment artifacts
 
-Keep final evaluation behavior unchanged unless a tiny refactor is needed.
+Record in `config.json` and `summary.md`:
 
-Improve scripts.benchmark_vec_envs.
+- selected policy class;
+- selected `net_arch`, or `default` if not provided;
+- activation function if explicitly set or if easy to extract;
+- approximate trainable parameter count if easy to compute after model creation;
+- observation dimension;
+- training profile.
 
-Add benchmark modes:
+Do not fail if parameter count is difficult, but prefer to include it.
 
---mode train-only
---mode workflow
---mode both
+### 3. Add policy metadata to evaluation reports
 
-Definitions:
+Add report metadata to `evaluate_model.py` where possible:
 
-train-only: runs PPO training with --train-eval off; measures pure training wall-clock.
-workflow: runs PPO training with training-time EvalCallback enabled; measures realistic training workflow wall-clock.
-both: runs both modes for each matrix case.
+- training profile;
+- observation dimension;
+- policy architecture from config, if available;
+- model choice: best/latest;
+- model path.
 
-Default should be train-only or both; choose the safer default for speed, but document it in --help.
+Do not change the metric structure incompatibly.
 
-Benchmark report improvements.
+### 4. Audit boost/hyperjump observation semantics
 
-JSON and Markdown reports should include, per run:
+Inspect `ha2_env.py` and document exactly what the existing hyperjump/boost-related observation field means.
 
-mode: train-only or workflow;
-vec_env;
-eval_vec_env;
-n_envs;
-repeat;
-requested_timesteps;
-actual total timesteps if available;
-wall-clock seconds;
-computed requested steps/s;
-computed actual steps/s if actual timesteps are available;
-SB3 reported fps if available;
-whether training-time eval was enabled;
-eval frequency;
-train eval episodes;
-whether training/eval VecEnv wrapper types matched;
-whether SB3 emitted the wrapper mismatch warning, if detectable;
-experiment path;
-exception, if any.
+Answer in `docs/ai/OBSERVATION_AUDIT.md`:
 
-Make warning handling explicit.
+- Is boost/hyperjump readiness exposed?
+- Is cooldown or reload progress exposed?
+- Is the value normalized?
+- Does the value tell the policy when boost is usable now?
+- Does it differ between grounded, airborne, and boost-flight phases?
+- Is there any separate field indicating that the player is currently in boost/hyperjump motion?
+- Is there any separate field indicating standard jump availability or double-jump availability?
 
-Do not simply suppress the SB3 warning globally.
+Do not change the observation in this task. If the current observation is ambiguous or insufficient, document that as a future design issue.
 
-Either:
+### 5. Add boost/jump behavior diagnostics
 
-fix it when --eval-vec-env same is selected; or
-capture/report that wrapper mismatch occurred.
+Extend evaluation diagnostics with action-state metrics that help distinguish frantic movement from timed movement.
 
-It is acceptable for --eval-vec-env dummy with --vec-env subproc to still warn, but the benchmark report must make this clear.
+Add per-episode and aggregate metrics such as:
 
-Add a compact summary section.
+- fraction of frames grounded;
+- fraction of frames airborne;
+- fraction of frames where boost/hyperjump is ready, if measurable;
+- fraction of frames where boost action is pressed;
+- fraction of frames where boost action is pressed while boost is ready;
+- fraction of frames where boost action is pressed while boost is not ready;
+- number of actual boost/hyperjump activations, if distinguishable from merely pressing the boost action;
+- mean frames between boost activations;
+- fraction of frames where jump is pressed;
+- jump presses while grounded;
+- jump presses while airborne;
+- duck fraction, already present if action marginals exist, but keep or surface it in the summary;
+- horizontal movement distribution, already present if action marginals exist, but keep or surface it in the summary.
 
-Markdown report should include:
+Use stable names and JSON null where a denominator is zero or a metric is undefined.
 
-best wall-clock result per mode;
-best result per vec_env;
-average computed steps/s by (mode, vec_env, n_envs);
-short note that wall-clock is the primary metric, not SB3 fps.
+Do not change movement mechanics.
 
-Keep benchmark runs bounded.
+### 6. Add lateral movement / map-width diagnostics
 
-The existing benchmark command should still work:
+Add simple diagnostics to tell whether the model uses the map width or stays in a narrow band:
 
-python -m scripts.benchmark_vec_envs --total-timesteps 8192 --repeats 2 --vec-envs dummy subproc --n-envs 1 2 4 8 --wandb off --device cpu
+- min player x during episode;
+- max player x during episode;
+- player x range;
+- mean player x;
+- fraction of frames moving left;
+- fraction of frames moving right;
+- fraction of frames with no horizontal movement;
+- optionally fraction of frames near left/right map boundaries if those bounds are already reliable.
 
-But now it should be possible to run:
+Do not alter camera or map logic.
 
-python -m scripts.benchmark_vec_envs --mode train-only --total-timesteps 8192 --repeats 2 --vec-envs dummy subproc --n-envs 1 2 4 8 --wandb off --device cpu
+### 7. Extend summary.md compact comparison
 
-and:
+Extend the best/latest summary table with compact rows for:
 
-python -m scripts.benchmark_vec_envs --mode workflow --total-timesteps 8192 --repeats 2 --vec-envs dummy subproc --n-envs 1 2 4 8 --eval-vec-env same --wandb off --device cpu
+- net architecture;
+- observation dimension;
+- mean player x range;
+- grounded fraction;
+- airborne fraction;
+- boost action fraction;
+- boost-ready fraction, if available;
+- boost-pressed-while-ready fraction, if available;
+- actual boost activations per episode, if available;
+- jump action fraction;
+- duck action fraction.
 
-Add tests.
+Keep this readable. Do not dump every diagnostic into summary.md.
+
+### 8. Add tests
 
 Tests should verify:
 
-train_parkour --train-eval off works for a tiny dummy run.
-train_parkour --vec-env subproc --eval-vec-env same works for a tiny run.
-benchmark_vec_envs --mode train-only writes JSON/Markdown.
-benchmark_vec_envs --mode workflow writes JSON/Markdown.
-benchmark report includes mode, eval settings, and wrapper-match fields.
-invalid mode or invalid eval vec env fails clearly.
-Documentation.
+- `--net-arch 128,128` is parsed correctly.
+- invalid `--net-arch` values fail clearly.
+- `run_experiment.py` passes `--net-arch` through to training.
+- experiment `config.json` records the selected net architecture.
+- summary/report metadata includes the selected net architecture.
+- default behavior remains unchanged when `--net-arch` is omitted.
+- `combat_v1` observation shape remains 37.
+- `combat_bullets_v1` observation shape remains 84.
+- boost/jump diagnostic keys are present in evaluation reports.
+- diagnostics handle episodes with no boost activations cleanly.
+- existing replay/scripted trace validation still passes.
 
-Update docs/ai/VALIDATION.md with a short validation command for:
+### 9. Do not train a real model in this task
 
-train-only benchmark;
-workflow benchmark.
+Only run smoke training.
 
-Update docs/ai/CURRENT_STATE.md with the new benchmark modes and eval controls.
+The matched 500k experiments will be run after this task.
 
-Append to docs/ai/CODEX_SESSION_LOG.md.
-
-Do not add an architecture decision unless changing defaults, which this task should not do.
-
-Validation
+## Validation
 
 Run from repo root:
 
-python -m py_compile ha2_env.py ha2_replay.py extract_ha2_data.py ha2_constants.py
-python -m py_compile scripts/experiment_utils.py scripts/train_parkour.py scripts/evaluate_model.py scripts/watch_model.py scripts/run_experiment.py scripts/benchmark_vec_envs.py
-python -m pytest
+- `python -m py_compile ha2_env.py ha2_replay.py extract_ha2_data.py ha2_constants.py`
+- `python -m py_compile scripts/experiment_utils.py scripts/train_parkour.py scripts/evaluate_model.py scripts/watch_model.py scripts/run_experiment.py scripts/benchmark_vec_envs.py`
+- `python -m pytest`
+- `python -m scripts.record_random_replay --steps 300 --out replays/smoke.jsonl`
+- `python -m scripts.verify_replay replays/smoke.jsonl`
+- `python -m scripts.record_scripted_trace --scenario all`
+- `python -m scripts.verify_replay reports/parity_traces/walk_right_120.jsonl`
+- `python -m scripts.verify_replay reports/parity_traces/fire_right_60.jsonl`
+- `python -m scripts.verify_replay reports/parity_traces/fire_at_heli_180.jsonl`
+- `python -m scripts.verify_replay reports/parity_traces/heli_shoots_hero_240.jsonl`
+- `python -m scripts.verify_replay reports/parity_traces/kill_heli_respawn_600.jsonl`
+- `python -c "from stable_baselines3.common.env_checker import check_env; from ha2_env import HeliAttack2Env; env=HeliAttack2Env(render_mode=None, training_profile='combat_bullets_v1', max_episode_steps=300); check_env(env, warn=True); env.close(); print('check_env combat_bullets_v1 passed')"`
+- `python -m scripts.run_experiment --training-profile combat_bullets_v1 --total-timesteps 1000 --n-envs 1 --vec-env dummy --wandb off --eval-episodes 1 --save-replays --net-arch 128,128`
 
-Run small training/eval-control smokes:
+Optional, if quick:
 
-python -m scripts.train_parkour --total-timesteps 1024 --n-envs 1 --vec-env dummy --train-eval off --wandb off
-python -m scripts.train_parkour --total-timesteps 1024 --n-envs 2 --vec-env subproc --eval-vec-env same --train-eval on --train-eval-episodes 1 --wandb off
+- `python -m scripts.run_experiment --training-profile combat_v1 --total-timesteps 1000 --n-envs 1 --vec-env dummy --wandb off --eval-episodes 1 --save-replays --net-arch 128,128`
 
-Run benchmark smokes:
-
-python -m scripts.benchmark_vec_envs --mode train-only --total-timesteps 2048 --repeats 1 --vec-envs dummy subproc --n-envs 1 2 --wandb off --device cpu
-python -m scripts.benchmark_vec_envs --mode workflow --total-timesteps 2048 --repeats 1 --vec-envs dummy subproc --n-envs 1 2 --eval-vec-env same --wandb off --device cpu
-
-Run replay determinism checks:
-
-python -m scripts.record_random_replay --steps 300 --out replays/smoke.jsonl
-python -m scripts.verify_replay replays/smoke.jsonl
-python -m scripts.record_scripted_trace --scenario all
-python -m scripts.verify_replay reports/parity_traces/walk_right_120.jsonl
-python -m scripts.verify_replay reports/parity_traces/fire_right_60.jsonl
-python -m scripts.verify_replay reports/parity_traces/fire_at_heli_180.jsonl
-python -m scripts.verify_replay reports/parity_traces/heli_shoots_hero_240.jsonl
-python -m scripts.verify_replay reports/parity_traces/kill_heli_respawn_600.jsonl
-Manual checks
+## Manual checks
 
 No GUI check is required.
 
-After this task, Charles should run:
+After the task, Charles should run matched experiments, for example:
 
-python -m scripts.benchmark_vec_envs --mode both --total-timesteps 8192 --repeats 2 --vec-envs dummy subproc --n-envs 1 2 4 8 --eval-vec-env same --wandb off --device cpu
+- `python -m scripts.run_experiment --training-profile combat_v1 --total-timesteps 500000 --n-envs 4 --vec-env dummy --wandb off --train-eval on --eval-freq 50000 --train-eval-episodes 2 --eval-episodes 10 --save-replays --net-arch 128,128`
 
-Then compare:
+- `python -m scripts.run_experiment --training-profile combat_bullets_v1 --total-timesteps 500000 --n-envs 4 --vec-env dummy --wandb off --train-eval on --eval-freq 50000 --train-eval-episodes 2 --eval-episodes 10 --save-replays --net-arch 128,128`
 
-train-only speed;
-workflow speed;
-evaluation overhead;
-wrapper-matched SubprocVecEnv behavior;
-best wall-clock configuration.
-Acceptance criteria
+Then compare against the previous matched 64-ish/default policy runs.
+
+## Acceptance criteria
 
 The task is complete only if:
 
-existing tests pass;
-replay/scripted trace verification still passes;
-current defaults remain stable;
---train-eval off works;
---eval-vec-env same works for SubprocVecEnv without the SB3 wrapper mismatch warning, or the remaining warning is explained and logged;
-benchmark reports distinguish train-only from workflow mode;
-benchmark reports include eval settings and wrapper-match status;
-Markdown reports identify the best wall-clock configuration;
-no reward, observation, action-space, simulator, or replay behavior changes are made.
-Stop conditions
+- `--net-arch` exists and works.
+- Default behavior remains unchanged when `--net-arch` is omitted.
+- Selected net architecture is recorded in experiment config and summary.
+- Evaluation report metadata includes policy/profile/observation information where available.
+- Boost/hyperjump observation semantics are documented.
+- Boost/jump/lateral movement diagnostics are present in evaluation reports.
+- `combat_v1` observation shape remains unchanged.
+- `combat_bullets_v1` observation shape remains unchanged.
+- No reward shaping is introduced.
+- No simulator mechanics are changed.
+- Existing tests and replay validations pass.
+- A 1000-step `combat_bullets_v1 --net-arch 128,128` smoke experiment succeeds.
+
+## Stop conditions
 
 Stop and report instead of improvising if:
 
-matching eval VecEnv type requires a large refactor;
-SubprocVecEnv eval cannot work reliably on Windows;
-EvalCallback setup becomes too coupled to training code;
-disabling training-time eval breaks model saving in an unclear way;
-benchmark tests become slow or flaky;
-any replay hash changes unexpectedly;
-reward/observation/simulator changes seem necessary.
-Required Codex session log
+- current policy architecture is not accessible or is already custom in a non-obvious way;
+- `--net-arch` requires a larger training-script refactor than expected;
+- boost readiness/reload semantics are unclear in the simulator state;
+- actual boost activation cannot be distinguished from boost button press without changing mechanics;
+- adding diagnostics risks changing replay state hashes;
+- observation shapes change unexpectedly;
+- reward or observation changes seem necessary;
+- tests become nondeterministic;
+- any replay verification changes unexpectedly.
+
+## Required Codex session log
 
 Update:
 
-docs/ai/CURRENT_STATE.md
-docs/ai/VALIDATION.md
-docs/ai/CODEX_SESSION_LOG.md
+- `docs/ai/CURRENT_STATE.md`
+- `docs/ai/VALIDATION.md`
+- `docs/ai/CODEX_SESSION_LOG.md`
+- `docs/ai/OBSERVATION_AUDIT.md`
 
 The log must include:
 
-files changed;
-commands run;
-pass/fail result;
-benchmark report paths;
-train-only benchmark summary;
-workflow benchmark summary;
-whether eval wrapper mismatch warning remains;
-recommended local training configuration based on measured wall-clock;
-remaining risks;
-suggested next step.
-
-Suggested next step after this task, not part of this task:
-
-add defensive diagnostics only:
-enemy bullets spawned;
-enemy bullet hit rate against player;
-damage event frames;
-time to first damage;
-frames between damage events;
-longest damage-free streak;
-damage-free episode count.
-
-The current provisional conclusion remains: **do not switch to SubprocVecEnv yet**. Dummy with `n_envs=4`
+- files changed;
+- commands run;
+- pass/fail result;
+- default policy architecture behavior;
+- how `--net-arch` is parsed and recorded;
+- final observation dimensions for `combat_v1` and `combat_bullets_v1`;
+- boost/hyperjump observation audit summary;
+- boost/jump/lateral diagnostics added;
+- smoke experiment path;
+- remaining risks;
+- suggested next step.

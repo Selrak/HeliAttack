@@ -30,3 +30,16 @@ Last updated: 2026-05-14 Europe/Paris
 - Total observation size is 84 `float32` fields (`COMBAT_BULLETS_V1_OBS_SIZE`).
 - The bullets are drawn from `self.visible_enemy_bullets()`, which filters using the `_enemy_bullet_visible_to_player` predicate (including an 8px margin) and sorts by squared distance to the player.
 - The `combat_v1` profile layout remains strictly unchanged to maintain backward compatibility with previous models.
+
+## Boost and Hyperjump Audit
+- **Hyperjump Charge:** Both `combat_v1` and `combat_bullets_v1` expose `hyperjump / 150.0` as a normalized value (0.0 to 1.0). 
+- **Readiness:** A value of 1.0 indicates that the boost is fully charged and usable.
+- **Cooldown:** The count-up progress (from 0 to 150) is visible to the policy, allowing it to "anticipate" when boost will be ready.
+- **Jump Availability:**
+  - Standard jump availability is indicated by the `jump` field (0.0 = available, 1.0 = used).
+  - Double-jump availability is indicated by the `jump2` field (0.0 = available if `jump` is 1.0, 1.0 = used).
+  - The `grounded` field (1.0 = on floor) confirms when jumps will be reset.
+- **Missing Information:**
+  - **`hjump` flag:** The policy DOES NOT see whether it is currently in a hyperjump state (high-speed upward boost). It only sees the resulting high `yspeed`.
+  - **`upk` and `boostK`:** The policy does not see the "key-up" lockout flags that prevent repeating jumps/boosts without releasing the button.
+- **Conclusion:** The current observation is likely sufficient for basic timing, but the lack of a "currently boosting" flag (`hjump`) might make it harder for the policy to distinguish a standard jump from a hyperjump purely from `yspeed`.

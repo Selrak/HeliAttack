@@ -26,6 +26,7 @@ def main() -> None:
     parser.add_argument("--training-profile", choices=["legacy", "combat_v1", "combat_bullets_v1"], default="combat_v1")
     parser.add_argument("--max-episode-steps", type=int, default=1800)
     parser.add_argument("--watch", action="store_true")
+    parser.add_argument("--net-arch", type=str, default=None, help="Comma-separated list of hidden layer sizes (e.g. '128,128')")
     args = parser.parse_args()
 
     train_args = [
@@ -42,6 +43,8 @@ def main() -> None:
         "--max-episode-steps", str(args.max_episode_steps),
         "--no-wandb-finish"
     ]
+    if args.net_arch is not None:
+        train_args.extend(["--net-arch", args.net_arch])
     if args.eval_freq is not None:
         train_args.extend(["--eval-freq", str(args.eval_freq)])
     if args.experiment_name is not None:
@@ -85,7 +88,8 @@ def main() -> None:
             with open(summary_path, "r") as f:
                 summary_content = f.read()
 
-        summary_content += f"\n\n## Evaluation Results ({args.eval_episodes} episodes)\n\n"
+        net_arch = best_report.get("net_arch", "default")
+        summary_content += f"\n\n## Evaluation Results ({args.eval_episodes} episodes) [net_arch: {net_arch}]\n\n"
         summary_content += "| Metric | Best Model | Latest Model |\n"
         summary_content += "|---|---|---|\n"
 
@@ -106,6 +110,21 @@ def main() -> None:
             best_val = best_report["rates"].get(r)
             latest_val = latest_report["rates"].get(r)
             summary_content += f"| {r.replace('_', ' ').title()} | {fmt_percent(best_val)} | {fmt_percent(latest_val)} |\n"
+
+        movement_metrics = [
+            ("frames_grounded", "Frames Grounded"),
+            ("frames_airborne", "Frames Airborne"),
+            ("frames_moving_left", "Frames Moving Left"),
+            ("frames_moving_right", "Frames Moving Right"),
+            ("frames_boost_pressed", "Frames Boost Pressed"),
+            ("frames_boost_ready", "Frames Boost Ready"),
+            ("boost_activations", "Boost Activations"),
+            ("frames_jump_pressed", "Frames Jump Pressed"),
+        ]
+        for key, label in movement_metrics:
+            best_val = best_report["metrics"].get(key, {}).get("mean")
+            latest_val = latest_report["metrics"].get(key, {}).get("mean")
+            summary_content += f"| Mean {label} | {fmt_number(best_val)} | {fmt_number(latest_val)} |\n"
 
         defensive_metrics = [
             ("visible_enemy_bullets_seen_unique", "Visible Bullets Seen"),

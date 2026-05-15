@@ -13,6 +13,7 @@ from scripts.experiment_utils import (
     resolve_model_path,
     write_json_file,
 )
+from scripts.evaluate_model import build_evaluation_report
 
 
 def test_default_experiment_name_increments_and_creates_layout(tmp_path):
@@ -88,3 +89,57 @@ def test_layout_paths_and_model_resolution(tmp_path):
     with pytest.raises(ValueError, match="requires --model"):
         resolve_model_path(model=None, experiment=None, model_choice="path")
 
+
+def test_evaluation_report_defensive_metrics_handle_no_damage(tmp_path):
+    stats = [
+        {
+            "reward": 1.0,
+            "length": 20,
+            "termination_reason": "time_limit",
+            "falls": 0,
+            "deaths": 0,
+            "heli_kills": 0,
+            "heli_hits": 0,
+            "player_shot_attempts": 0,
+            "player_bullets_spawned": 0,
+            "player_shots_spawn_blocked": 0,
+            "total_player_damage": 0,
+            "enemy_bullet_hits": 0,
+            "final_score": 0,
+            "max_score": 0,
+            "visible_enemy_bullets_seen_unique": 0,
+            "visible_enemy_bullets_hit_player": 0,
+            "visible_enemy_bullets_removed_without_hit": 0,
+            "visible_enemy_bullets_max": 0,
+            "visible_enemy_bullets_mean": 0.0,
+            "visible_enemy_bullets_p95": 0.0,
+            "visible_enemy_bullets_over_top10_frames": 0,
+            "max_visible_enemy_bullets_over_top10_excess": 0,
+            "damage_events": 0,
+            "time_to_first_damage": None,
+            "mean_frames_between_damage": None,
+            "min_frames_between_damage": None,
+            "max_frames_between_damage": None,
+            "frames_since_last_damage": 20,
+            "longest_damage_free_streak": 20,
+            "damage_free_episode": True,
+            "engine_enemy_bullets_spawned": 0,
+            "engine_enemy_bullets_active": 0,
+            "enemy_bullet_hits_not_visible": 0,
+            "action_frequencies": {"1|0|0|0|0|0": 20},
+        }
+    ]
+    report = build_evaluation_report(
+        layout=None,
+        model_path=tmp_path / "model.zip",
+        effective_model_choice="path",
+        training_profile="combat_v1",
+        max_episode_steps=20,
+        episodes=1,
+        stats=stats,
+        replay_paths=[],
+    )
+    assert report["rates"]["visible_enemy_bullet_hit_rate_against_player"] is None
+    assert report["rates"]["damage_free_episode_rate"] == 1.0
+    assert report["metrics"]["time_to_first_damage"]["mean"] is None
+    assert report["metrics"]["longest_damage_free_streak"]["mean"] == 20.0
