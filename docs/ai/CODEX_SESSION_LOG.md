@@ -741,3 +741,47 @@ Add lightweight PPO runtime timing and a sequential-vs-parallel experiment bench
 
 ### Suggested Next Step
 - Attendre la fin du run parallèle de 500k pour les deux profils.
+
+## 2026-05-15 17:30 Europe/Paris - Fix RL Reporting and Instrumentation Bugs
+
+### Task Attempted
+Fix the RL experiment reporting and instrumentation issues discovered after the concurrent 500k A/B run.
+
+### Files Changed or Created
+- Updated `scripts/run_experiment.py` to correctly sequence the orchestration timing report generation *before* the diagnostic bundle creation, ensuring timing reports are included in the zip.
+- Updated `scripts/run_experiment_pair.py` to correctly extract and record the `timing_report_path` in `JobResult` and explicitly handle `--seed-b` for clarity in logs and summaries.
+- Updated `scripts/evaluate_model.py` to properly extract movement diagnostics from the nested `movement_diagnostics` dict within `info`, fixing the `n/a` values in the summary.
+- Updated `scripts/evaluate_model.py` to ensure `net_arch` and other policy metadata are read from `experiment_config` and accurately recorded.
+- Updated `tests/test_benchmark_orchestration.py` to include specific tests for bundling, `net_arch` reporting, movement metrics aggregation, and seed behavior.
+
+### Repository Facts Discovered
+- `DummyVecEnv` does not emit terminal infos in the standard `info` dict but in `info["terminal_info"]`. However, for `HeliAttack2Env` evaluated directly (without vectorization), the `info` dict from the final `step` contains the correct values. The issue was purely a dictionary nesting bug (`info["movement_diagnostics"]["frames_grounded"]` vs `info["frames_grounded"]`).
+- Local variables in a Python script (like `config`) are not guaranteed to exist in `locals()` if they are only assigned conditionally, leading to silent `None` values when using `config.get()`.
+
+### Commands Run
+- `python -m pytest` (Passed 71/71)
+- `python -m scripts.run_experiment_pair --mode parallel --total-timesteps 1000 --n-envs 1 --eval-episodes 1` (Smoke test passed)
+
+### Validation Result
+- Passed: Diagnostic bundles now correctly include `train_timing.json/md` and `orchestration_timing.json/md`.
+- Passed: `pair_summary.json` records timing report paths.
+- Passed: `--net-arch` is consistently recorded in `config.json`, `eval_latest.json`, and `summary.md`.
+- Passed: Movement diagnostics (e.g. `frames_grounded`) no longer show `n/a` in summaries and aggregate correctly.
+- Passed: Seed behavior is explicit (`Job A Seed` and `Job B Seed` are logged).
+
+### Bugs or Blockers Encountered
+- `FileExistsError` during consecutive pytest runs due to un-cleaned temporary experiment directories.
+- `KeyError: 'net_arch'` in tests due to a previously overridden file update that failed to re-add the `net_arch` saving logic.
+
+### Fixes or Workarounds Applied
+- Added explicit cleanup (`shutil.rmtree`) to test fixtures.
+- Fixed dictionary extraction logic using chained `.get()` with safe fallbacks.
+
+### Architectural Discrepancies
+- None.
+
+### Remaining Risks
+- None.
+
+### Suggested Next Step
+- Review the finalized reports from the 500k parallel run.
