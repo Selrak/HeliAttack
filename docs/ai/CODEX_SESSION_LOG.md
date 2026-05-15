@@ -619,3 +619,115 @@ Add visible enemy-bullet diagnostics, damage timing metrics, compact eval summar
 
 ### Suggested Next Step
 - Compare the existing 500k `combat_v1` runs with the new defensive diagnostics, especially damage timing and visible bullet hit rate.
+
+## 2026-05-15 13:00 Europe/Paris - Policy Capacity and Movement Diagnostics
+
+### Task Attempted
+Implemented PPO policy-capacity controls (`--net-arch`) and movement diagnostics (grounded/airborne frames, boost/jump counts, lateral range) to analyze agent behavior.
+
+### Files Changed or Created
+- Updated `ha2_env.py` to track 15+ new movement diagnostic counters and expose them in `info`.
+- Updated `scripts/train_parkour.py` and `scripts/run_experiment.py` to support `--net-arch` and record policy metadata (parameter count, architecture) in `config.json`.
+- Updated `scripts/evaluate_model.py` to aggregate movement diagnostics and policy metadata in JSON reports.
+- Updated `docs/ai/OBSERVATION_AUDIT.md`, `docs/ai/CURRENT_STATE.md`, and `docs/ai/CODEX_SESSION_LOG.md`.
+- Created `tests/test_rl_diagnostics.py`.
+
+### Repository Facts Discovered
+- `hyperjump / 150.0` is visible to the policy, providing charge/cooldown info, but the `hjump` (active boost) flag and lockout flags are currently hidden.
+- MlpPolicy defaults to `[64, 64]` hidden layers in SB3; providing `--net-arch` allows testing if the 84-dim `combat_bullets_v1` profile needs more capacity.
+
+### Commands Run
+- `python -m pytest` (Passed 64/64)
+- `python -m scripts.run_experiment --total-timesteps 1000 --net-arch 128,128 --training-profile combat_bullets_v1 --eval-episodes 1` (Passed smoke run)
+
+### Validation Result
+- Passed: `ha2_env.py` state variables correctly reset and accumulate.
+- Passed: `config.json` correctly records `trainable_parameters` and `net_arch`.
+- Passed: `summary.md` comparisons now include movement behavior tables.
+
+### Bugs or Blockers Encountered
+- `AttributeError: 'HeliAttack2Env' object has no attribute 'min_player_x'`: Fixed by ensuring all new diagnostics are initialized in `__init__` as well as `reset()`.
+- `SyntaxError` in `evaluate_model.py`: Fixed a corrupted string literal in the `if __name__ == "__main__"` block.
+
+### Fixes or Workarounds Applied
+- Implemented `aggregate_metric` helper in `evaluate_model.py` to handle `None` values (e.g. no damage events) gracefully in reports.
+
+### Architectural Discrepancies
+- None.
+
+### Remaining Risks
+- The diagnostics increase the `info` dict size significantly; this is fine for CPU training but should be monitored if memory becomes tight on many parallel envs.
+
+### Recommended Next Action
+- Analyser les résultats du grand run parallèle de 500k pour les deux profils une fois terminé.
+
+## 2026-05-15 14:00 Europe/Paris - Thread Benchmarking and Parallel 500k Run
+
+### Task Attempted
+Executer séquentiellement les tests de charge CPU recommandés dans `NEXT_CODEX_TASK.md` (2, auto=6, 4, 8, et 12 threads) sur 50k pas, puis lancer la véritable comparaison de 500k pas en mode parallèle.
+
+### Files Changed or Created
+- `docs/ai/CODEX_SESSION_LOG.md` mis à jour avec les résultats du benchmark.
+
+### Repository Facts Discovered
+- La machine cible (ThinkPad P16, 24 processeurs logiques) souffre d'oversubscription (surcharge de synchronisation des threads) si PPO reçoit trop de threads en mode DummyVecEnv.
+- Le "sweet spot" se situe entre 4 et 6 threads par job en mode parallèle.
+
+### Commands Run
+- `python -m scripts.run_experiment_pair --mode both --total-timesteps 50000 --threads-per-job <X>` pour X = 2, auto(6), 4, 8, 12.
+- `python -m scripts.run_experiment_pair --mode parallel --total-timesteps 500000 --threads-per-job auto` (Lancé en tâche de fond).
+
+### Validation Result
+- **2 threads :** Parallèle 229s (Speedup 1.06x)
+- **4 threads :** Parallèle 196s (Speedup 1.33x)
+- **6 threads (auto) :** Parallèle 196s (Speedup 1.39x)
+- **8 threads :** Parallèle 206s (Speedup 1.30x)
+- **12 threads :** Parallèle 271s (Speedup 1.05x)
+
+### Architectural Discrepancies
+- None.
+
+### Suggested Next Step
+- Attendre la fin du run de 500k et analyser les rapports d'évaluation pour déterminer l'efficacité du nouveau profil `combat_bullets_v1`.
+
+## 2026-05-15 13:40 Europe/Paris - PPO Timing and Concurrent Benchmarking
+
+### Task Attempted
+Add lightweight PPO runtime timing and a sequential-vs-parallel experiment benchmark to answer questions about wall-clock time distribution and parallel task throughput on a single machine.
+
+### Files Changed or Created
+- Created `scripts/runtime_timing.py` to house the `TimingCallback` and `TrainingTiming` dataclass.
+- Created `scripts/run_experiment_pair.py` to orchestrate A/B training pairs sequentially or concurrently with controlled thread counts.
+- Created `tests/test_benchmark_orchestration.py`.
+- Updated `scripts/train_parkour.py` and `scripts/run_experiment.py` to support `--timing-profile on` and `--torch-num-threads`.
+- Updated `docs/ai/CURRENT_STATE.md` and `docs/ai/CODEX_SESSION_LOG.md`.
+
+### Repository Facts Discovered
+- `DummyVecEnv` does not fully utilize all logical processors unless the underlying environment is heavily threaded, leaving room for a second training process to run concurrently.
+- Pickling (used for saving models) fails when internal model methods are monkey-patched (`TypeError: cannot pickle 'EncodedFile' object`). This required switching to a standard SB3 Callback (`TimingCallback`) instead of direct function wrapping for PPO methods.
+
+### Commands Run
+- `python -m scripts.run_experiment_pair --total-timesteps 256 --n-envs 1 --eval-episodes 1 --mode both` (Smoke test)
+
+### Validation Result
+- Passed: `run_experiment_pair.py` correctly runs jobs sequentially and in parallel, parsing the results into a markdown summary and JSON file without error.
+- Passed: `train_timing.md` and `orchestration_timing.md` are correctly generated.
+- Passed: Model pickling works successfully when using the `TimingCallback` fix.
+
+### Bugs or Blockers Encountered
+- `TypeError: cannot pickle 'EncodedFile' object` during `model.save()` caused by monkey-patching.
+- `UnicodeEncodeError` writing the pair summary markdown due to Windows encoding issues with emojis.
+
+### Fixes or Workarounds Applied
+- Replaced the monkey-patching approach with a proper `TimingCallback(BaseCallback)`.
+- Used `sys.executable` instead of `"python"` in `subprocess.Popen` to ensure the correct virtual environment is used for sub-jobs.
+- Set `encoding="utf-8"` on all `open()` calls that generate markdown.
+
+### Architectural Discrepancies
+- The timing system uses an SB3 Callback for rollout/training phases, but requires a small monkey-patch on `EvalCallback` since SB3 does not easily expose "did an evaluation actually run this step" to sibling callbacks.
+
+### Remaining Risks
+- Parallel mode over-subscription could still occur if the OS scheduler behaves unpredictably, but `OMP_NUM_THREADS` and `torch.set_num_threads` are now strictly set by default.
+
+### Suggested Next Step
+- Attendre la fin du run parallèle de 500k pour les deux profils.
