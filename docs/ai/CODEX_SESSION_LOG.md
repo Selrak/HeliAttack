@@ -678,11 +678,21 @@ Executer séquentiellement les tests de charge CPU recommandés dans `NEXT_CODEX
 - `python -m scripts.run_experiment_pair --mode parallel --total-timesteps 500000 --threads-per-job auto` (Lancé en tâche de fond).
 
 ### Validation Result
-- **2 threads :** Parallèle 229s (Speedup 1.06x)
-- **4 threads :** Parallèle 196s (Speedup 1.33x)
-- **6 threads (auto) :** Parallèle 196s (Speedup 1.39x)
-- **8 threads :** Parallèle 206s (Speedup 1.30x)
-- **12 threads :** Parallèle 271s (Speedup 1.05x)
+- Une série de benchmarks à 50 000 pas a été réalisée pour mesurer l'impact du nombre de threads Torch (`--threads-per-job`) sur les modes Séquentiel et Parallèle (2 jobs concurrents avec un décalage de 60s).
+
+| Threads/Job | Temps Séquentiel | Temps Parallèle | Speedup Parallèle |
+|-------------|------------------|-----------------|-------------------|
+| 2           | 243.32s          | 229.98s         | 1.06x             |
+| 4           | 260.49s          | 196.10s         | 1.33x             |
+| 6 (`auto`)  | 272.85s          | 196.29s         | 1.39x             |
+| 8           | 269.20s          | 206.87s         | 1.30x             |
+| 12          | 283.98s          | 271.51s         | 1.05x             |
+
+**Analyse des résultats :**
+1. **Séquentiel :** Plus on alloue de threads à PyTorch (de 2 à 12), plus l'entraînement *séquentiel* est lent (passant de 243s à 284s). L'environnement étant très léger et l'architecture réseau modeste (128x128), le coût de synchronisation interne des threads Torch (overhead) l'emporte sur le gain de calcul matriciel.
+2. **Parallèle :** L'exécution de deux jobs en concurrence devient très efficace à 4 ou 6 threads par job (tombant à 196s, contre 230s pour 2 threads). 
+3. **Saturation :** À 12 threads par job (soit 24 threads Torch au total, ce qui correspond exactement aux 24 processeurs logiques de la machine), la machine sature (oversubscription) et le temps parallèle remonte à 271s, annulant tout bénéfice.
+- Le réglage par défaut `auto` (qui alloue `os.cpu_count() // 4 = 6` threads) s'avère être un excellent compromis pour le mode parallèle sur cette machine.
 
 ### Architectural Discrepancies
 - None.
