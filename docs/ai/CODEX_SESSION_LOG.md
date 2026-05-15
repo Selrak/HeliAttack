@@ -812,4 +812,70 @@ Fix the PPO runtime timing instrumentation. The previous `TimingCallback` incorr
 - None.
 
 ### Suggested Next Step
-- Wait for the 500k parallel run to finish and analyze its detailed timing report.
+- Review the finalized reports from the 500k parallel run.
+
+## 2026-05-15 19:30 Europe/Paris - Stable PPO Timing and Orchestration Finalization
+
+### Task Attempted
+Fix the PPO runtime timing instrumentation to correctly separate `train_update` time from total `learn()` time without breaking model pickling (`TypeError: cannot pickle '_thread.lock' object`), and finalize the parallel orchestration scripts.
+
+### Files Changed or Created
+- Updated `scripts/runtime_timing.py` to replace all monkey-patching approaches with a clean `TimedPPO` subclass that correctly measures `collect_rollouts` and `train` phases, storing results in a global `_current_timing` reference to preserve SB3 model serialization compatibility.
+- Fixed the semantics of `other_or_unclassified_training_seconds` to no longer subtract `train_eval_total` (since evaluation overlaps with rollouts).
+- Updated `scripts/train_parkour.py` to instantiate `TimedPPO` and correctly pass `--timing-profile`.
+- Updated `scripts/run_experiment_pair.py` to properly execute background instances using `sys.executable` (fixing environment issues) and handle text encoding cleanly.
+- Updated `ha2_env.py` to correctly initialize movement diagnostics boundaries.
+- Updated `docs/ai/CURRENT_STATE.md` and `docs/ai/CODEX_SESSION_LOG.md`.
+
+### Repository Facts Discovered
+- SB3 Callbacks (`on_training_start`/`end`) wrap the entire learning session, making them unsuitable for timing the internal PyTorch gradient updates.
+- Monkey-patching `__dict__` methods on an SB3 model instance often leads to pickling errors during `EvalCallback` checkpoints because the closure captures non-picklable objects like the internal stdout logger locks. A lightweight subclass is the safest and most robust path.
+
+### Commands Run
+- `python -m pytest tests/test_benchmark_orchestration.py` (Passed 4/4)
+- `python -m scripts.run_experiment_pair --mode parallel --total-timesteps 500000 --n-envs 4 --eval-episodes 10`
+
+### Validation Result
+- Passed: `other_or_unclassified_training_seconds` is consistently `>= 0`.
+- Passed: `train_update_count` exactly matches `rollout_count` as expected for PPO.
+- Passed: The model successfully saves and evaluates during and after training without `Cloudpickle` errors.
+
+### Architectural Discrepancies
+- None.
+
+### Suggested Next Step
+- Review the finalized reports from the 500k parallel run.
+
+## 2026-05-15 22:00 Europe/Paris - Source Inspection Fixes
+
+### Task Attempted
+Fix the remaining HA2 RL reporting/instrumentation bugs found by source inspection, specifically ensuring movement diagnostics are properly incremented and all diagnostic artifacts are bundled correctly.
+
+### Files Changed or Created
+- Updated `ha2_env.py` to properly increment movement metrics (`frames_grounded`, `frames_airborne`, `min_player_x`, `max_player_x`, `frames_moving_left`, etc.) within `step()` using the post-physics player state.
+- Updated `scripts/train_parkour.py` to use `allow_overwrite=True` when updating `config.json` with `net_arch` and `trainable_parameters`.
+- Updated `scripts/run_experiment.py` to properly wait for the `orchestration_timing` creation before bundling the zip, and ensured `eval_latest.json` and `latest_eval_ep0.jsonl` are included in the bundle.
+- Updated `scripts/run_experiment_pair.py` to ensure `timing_report_path` is parsed and recorded in parallel mode, and that job duration uses the global start tick.
+- Created `audit_smoke.py` temporarily to mathematically enforce the validity of all JSON/ZIP outputs.
+
+### Repository Facts Discovered
+- Movement counters like `frames_grounded` had been correctly initialized and exported previously, but the internal tracking code within `ha2_env.step()` had been lost or overwritten during a previous iteration. They must be evaluated *after* physics execution for accuracy.
+
+### Commands Run
+- `python -m scripts.run_experiment_pair --mode parallel --total-timesteps 1000 --n-envs 1 --eval-episodes 1` (Smoke test)
+- `python audit_smoke.py`
+
+### Validation Result
+- Passed: `frames_grounded` and other movement diagnostics are correctly incremented, aggregated, and shown in the evaluation reports.
+- Passed: `pair_summary.json` correctly stores `timing_report_path`.
+- Passed: `_diagnostic_bundle.zip` contains both `eval_best`, `eval_latest`, their replays, and all 4 timing reports.
+- Passed: `config.json` correctly saves `net_arch=128,128`, `trainable_parameters`, and `activation_fn`.
+
+### Architectural Discrepancies
+- None.
+
+### Remaining Risks
+- None.
+
+### Suggested Next Step
+- Lancer de nouvelles expérimentations RL ou analyser les résultats existants.

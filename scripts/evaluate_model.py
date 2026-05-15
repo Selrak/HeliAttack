@@ -62,6 +62,7 @@ def build_evaluation_report(
     episodes: int,
     stats: list[dict],
     replay_paths: list[str],
+    experiment_config: dict | None = None,
 ) -> dict:
     termination_reason_counts = Counter(row["termination_reason"] for row in stats)
 
@@ -83,6 +84,9 @@ def build_evaluation_report(
     visible_hits_sum = sum(row["visible_enemy_bullets_hit_player"] for row in stats)
     over_top10_frames_sum = sum(row["visible_enemy_bullets_over_top10_frames"] for row in stats)
 
+    if experiment_config is None:
+        experiment_config = {}
+
     report = {
         "experiment": str(layout.path) if layout is not None else None,
         "model": str(model_path),
@@ -90,9 +94,9 @@ def build_evaluation_report(
         "training_profile": training_profile,
         "max_episode_steps": max_episode_steps,
         "episodes": episodes,
-        "net_arch": config.get("net_arch") if layout and layout.config_path.exists() and "config" in locals() else None,
-        "activation_fn": config.get("activation_fn") if layout and layout.config_path.exists() and "config" in locals() else None,
-        "trainable_parameters": config.get("trainable_parameters") if layout and layout.config_path.exists() and "config" in locals() else None,
+        "net_arch": experiment_config.get("net_arch"),
+        "activation_fn": experiment_config.get("activation_fn"),
+        "trainable_parameters": experiment_config.get("trainable_parameters"),
         "metrics": {
             "reward": aggregate_metric(stats, "reward"),
             "length": aggregate_metric(stats, "length"),
@@ -174,6 +178,7 @@ def main(args_list: list[str] | None = None) -> None:
     PPO = _load_ppo()
     effective_model_choice = "path" if args.model is not None else args.model_choice
     layout = None
+    config = {}
     if args.experiment is not None:
         experiment_path = Path(args.experiment)
         if not experiment_path.exists():
@@ -275,6 +280,7 @@ def main(args_list: list[str] | None = None) -> None:
             env.close()
 
         defensive = info.get("defensive_diagnostics", {})
+        movement = info.get("movement_diagnostics", {})
         stats.append(
             {
                 "episode": episode,
@@ -298,6 +304,21 @@ def main(args_list: list[str] | None = None) -> None:
                 "player_bullets_spawned": info.get("player_bullets_spawned", 0),
                 "player_shots_spawn_blocked": info.get("player_shots_spawn_blocked", 0),
                 "enemy_bullet_hits": info.get("enemy_bullet_hits", 0),
+                "frames_grounded": movement.get("frames_grounded", info.get("frames_grounded", 0)),
+                "frames_airborne": movement.get("frames_airborne", info.get("frames_airborne", 0)),
+                "frames_boost_ready": movement.get("frames_boost_ready", info.get("frames_boost_ready", 0)),
+                "frames_boost_pressed": movement.get("frames_boost_pressed", info.get("frames_boost_pressed", 0)),
+                "frames_boost_pressed_ready": movement.get("frames_boost_pressed_ready", info.get("frames_boost_pressed_ready", 0)),
+                "frames_boost_pressed_not_ready": movement.get("frames_boost_pressed_not_ready", info.get("frames_boost_pressed_not_ready", 0)),
+                "boost_activations": movement.get("boost_activations", info.get("boost_activations", 0)),
+                "frames_jump_pressed": movement.get("frames_jump_pressed", info.get("frames_jump_pressed", 0)),
+                "jump_presses_grounded": movement.get("jump_presses_grounded", info.get("jump_presses_grounded", 0)),
+                "jump_presses_airborne": movement.get("jump_presses_airborne", info.get("jump_presses_airborne", 0)),
+                "frames_moving_left": movement.get("frames_moving_left", info.get("frames_moving_left", 0)),
+                "frames_moving_right": movement.get("frames_moving_right", info.get("frames_moving_right", 0)),
+                "frames_not_moving_horizontally": movement.get("frames_not_moving_horizontally", info.get("frames_not_moving_horizontally", 0)),
+                "min_player_x": movement.get("min_player_x", info.get("min_player_x", 0.0)),
+                "max_player_x": movement.get("max_player_x", info.get("max_player_x", 0.0)),
                 "visible_enemy_bullets_current": defensive.get("visible_enemy_bullets_current", 0),
                 "visible_enemy_bullets_max": defensive.get("visible_enemy_bullets_max", 0),
                 "visible_enemy_bullets_mean": defensive.get("visible_enemy_bullets_mean", 0.0),
@@ -339,6 +360,7 @@ def main(args_list: list[str] | None = None) -> None:
         episodes=args.episodes,
         stats=stats,
         replay_paths=replay_paths,
+        experiment_config=config,
     )
     write_json_file(report_path, report)
     print(f"Wrote {report_path}")

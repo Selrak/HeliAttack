@@ -1366,10 +1366,34 @@ class HeliAttack2Env(gym.Env):
         enemy_event["player_damage"] += int(enemy_update_event["player_damage"])
         self.total_player_damage += int(enemy_event["player_damage"])
 
+        is_grounded = bool(self.jump == 0 and self.yspeed == 0)
+        is_hyperjump_ready = bool(self.hyperjump >= 150)
+        
+        if is_hyperjump_ready:
+            self.frames_boost_ready += 1
+            
+        if boost_action == 1:
+            self.frames_boost_pressed += 1
+            if is_hyperjump_ready:
+                self.frames_boost_pressed_ready += 1
+            else:
+                self.frames_boost_pressed_not_ready += 1
+
+        if jump_action == 1:
+            self.frames_jump_pressed += 1
+            if is_grounded:
+                self.jump_presses_grounded += 1
+            else:
+                self.jump_presses_airborne += 1
+
         if move_action == 0:
+            self.frames_moving_left += 1
             self.facing_right = False
         elif move_action == 2:
+            self.frames_moving_right += 1
             self.facing_right = True
+        else:
+            self.frames_not_moving_horizontally += 1
 
         if duck_action == 1:
             self.playerwidth = 2 * self.defplayerwidth / 3
@@ -1410,9 +1434,15 @@ class HeliAttack2Env(gym.Env):
                 self.jump = 1
                 self.hjump = 1
                 self.hyperjump = 0
+                self.boost_activations += 1
+                if self.frames_since_last_boost > 0:
+                    self.frames_between_boosts.append(self.frames_since_last_boost)
+                self.frames_since_last_boost = 0
             self.boostK = 1
         else:
             self.boostK = 0
+            
+        self.frames_since_last_boost += 1
 
         if jump_action == 1:
             if self.up > 0:
@@ -1599,6 +1629,13 @@ class HeliAttack2Env(gym.Env):
             reward = float(sum(reward_breakdown.values()))
 
         self.tick += 1
+        
+        is_grounded = bool(self.jump == 0 and self.yspeed == 0)
+        if is_grounded:
+            self.frames_grounded += 1
+        else:
+            self.frames_airborne += 1
+
         self._update_visible_enemy_bullet_diagnostics()
         self.last_action = action
         self.last_reward = float(reward)

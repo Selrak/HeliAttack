@@ -108,11 +108,18 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
     parser.add_argument("--no-wandb-finish", action="store_true", help="Skip artifact upload and wandb finish (for orchestration).")
     parser.add_argument("--mirror-root-models", action="store_true")
     parser.add_argument("--net-arch", type=str, default=None, help="Comma-separated list of hidden layer sizes (e.g. '128,128')")
+    parser.add_argument("--timing-profile", choices=["on", "off"], default="off")
+    parser.add_argument("--torch-num-threads", type=int, default=None)
     args = parser.parse_args(args_list)
     if args.eval_freq is not None and args.eval_freq <= 0:
         raise SystemExit("--eval-freq must be positive")
     if args.train_eval_episodes <= 0:
         raise SystemExit("--train-eval-episodes must be positive")
+
+    import torch
+    effective_torch_threads = args.torch_num_threads or int(os.environ.get("HA2_TORCH_NUM_THREADS", 0)) or None
+    if effective_torch_threads:
+        torch.set_num_threads(effective_torch_threads)
 
     policy_kwargs = {}
     if args.net_arch:
@@ -155,9 +162,24 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         "tensorboard_log": str(tensorboard_log),
         "mirror_root_models": bool(args.mirror_root_models),
         "resume_from": str(args.resume_from) if args.resume_from is not None else None,
+        "net_arch": args.net_arch if args.net_arch else "default",
     }
     write_json_file(layout.config_path, config)
     write_text_file(layout.git_info_path, git_info_text(repo_root), allow_overwrite=True)
+
+    training_timing = None
+    if args.timing_profile == "on":
+        from scripts.runtime_timing import TrainingTiming
+        training_timing = TrainingTiming(
+            total_requested_timesteps=args.total_timesteps,
+            n_envs=args.n_envs,
+            vec_env=args.vec_env,
+            training_profile=args.training_profile,
+            net_arch=args.net_arch or "default",
+            torch_num_threads=effective_torch_threads,
+            omp_num_threads=os.environ.get("OMP_NUM_THREADS"),
+            mkl_num_threads=os.environ.get("MKL_NUM_THREADS"),
+        )
 
     env = make_vec_env(
         vec_env=args.vec_env,
@@ -225,7 +247,13 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         model = PPO.load(args.resume_from, env=env, device=args.device)
         model.tensorboard_log = str(tensorboard_log)
     else:
-        model = PPO(
+        PPOClass = PPO
+        if training_timing:
+            from scripts.runtime_timing import TimedPPO, set_current_timing
+            PPOClass = TimedPPO
+            set_current_timing(training_timing)
+            
+        model = PPOClass(
             "MlpPolicy",
             env,
             seed=args.seed,
@@ -241,11 +269,32 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         config["trainable_parameters"] = total_params
         if hasattr(model.policy, "activation_fn"):
             config["activation_fn"] = model.policy.activation_fn.__name__
-        write_json_file(layout.config_path, config)
-    except Exception:
-        pass
+        write_json_file(layout.config_path, config, allow_overwrite=True)
+    except Exception as e:
+        print(f"Warning: Could not update config with policy metadata: {e}")
 
+    if training_timing:
+        from scripts.runtime_timing import wrap_eval_callback_timing
+        # Find EvalCallback in callbacks list
+        eval_cb = next((cb for cb in callbacks if isinstance(cb, EvalCallback)), None)
+        if eval_cb:
+            wrap_eval_callback_timing(eval_cb, training_timing)
+
+    import time
+    train_start_wall = time.perf_counter()
     model.learn(total_timesteps=args.total_timesteps, callback=callbacks)
+    train_duration = time.perf_counter() - train_start_wall
+
+    if training_timing:
+        from scripts.runtime_timing import set_current_timing
+        set_current_timing(None)
+        training_timing.total_training_wallclock = train_duration
+        timing_dir = layout.path / "reports" / "timing"
+        timing_dir.mkdir(parents=True, exist_ok=True)
+        training_timing.to_json(timing_dir / "train_timing.json")
+        training_timing.to_markdown(timing_dir / "train_timing.md")
+        print(f"Wrote training timing report to {timing_dir}")
+
     latest_model = layout.models_dir / "latest"
     model.save(latest_model)
 
