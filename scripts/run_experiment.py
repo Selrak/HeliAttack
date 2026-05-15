@@ -24,6 +24,7 @@ def main() -> None:
     parser.add_argument("--experiment-name", type=str, default=None)
     parser.add_argument("--save-replays", action="store_true")
     parser.add_argument("--training-profile", choices=["legacy", "combat_v1", "combat_bullets_v1"], default="combat_v1")
+    parser.add_argument("--control-mode", choices=["full", "movement_scripted_attack_direct", "movement_no_boost_scripted_attack_direct"], default="full")
     parser.add_argument("--max-episode-steps", type=int, default=1800)
     parser.add_argument("--watch", action="store_true")
     parser.add_argument("--net-arch", type=str, default=None, help="Comma-separated list of hidden layer sizes (e.g. '128,128')")
@@ -45,6 +46,7 @@ def main() -> None:
         "--device", str(args.device),
         "--wandb", args.wandb,
         "--training-profile", args.training_profile,
+        "--control-mode", args.control_mode,
         "--max-episode-steps", str(args.max_episode_steps),
         "--no-wandb-finish",
         "--timing-profile", args.timing_profile,
@@ -73,6 +75,7 @@ def main() -> None:
             "--episodes", str(args.eval_episodes),
             "--seed", str(args.seed + 1000),
             "--training-profile", args.training_profile,
+            "--control-mode", args.control_mode,
             "--max-episode-steps", str(args.max_episode_steps),
         ]
         if args.save_replays:

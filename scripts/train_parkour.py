@@ -41,6 +41,7 @@ class EnvFactory:
     seed: int
     training_profile: str
     max_episode_steps: int
+    control_mode: str = "full"
 
     def __call__(self):
         from stable_baselines3.common.monitor import Monitor
@@ -50,6 +51,13 @@ class EnvFactory:
             training_profile=self.training_profile,
             max_episode_steps=self.max_episode_steps,
         )
+        if self.control_mode == "movement_scripted_attack_direct":
+            from ha2_env import MovementScriptedAttackDirectWrapper
+            env = MovementScriptedAttackDirectWrapper(env)
+        elif self.control_mode == "movement_no_boost_scripted_attack_direct":
+            from ha2_env import MovementNoBoostScriptedAttackDirectWrapper
+            env = MovementNoBoostScriptedAttackDirectWrapper(env)
+            
         env.reset(seed=self.seed + self.rank)
         return Monitor(env)
 
@@ -64,6 +72,7 @@ def make_vec_env(
     monitor_cls,
     dummy_vec_env_cls,
     subproc_vec_env_cls,
+    control_mode: str = "full",
 ):
     env_fns = [
         EnvFactory(
@@ -71,6 +80,7 @@ def make_vec_env(
             seed=seed,
             training_profile=training_profile,
             max_episode_steps=max_episode_steps,
+            control_mode=control_mode,
         )
         for i in range(n_envs)
     ]
@@ -100,6 +110,7 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
     parser.add_argument("--tensorboard-log", type=Path, default=None)
     parser.add_argument("--wandb", choices=["off", "on"], default="off")
     parser.add_argument("--training-profile", choices=["legacy", "combat_v1", "combat_bullets_v1"], default="combat_v1")
+    parser.add_argument("--control-mode", choices=["full", "movement_scripted_attack_direct", "movement_no_boost_scripted_attack_direct"], default="full")
     parser.add_argument("--max-episode-steps", type=int, default=1800)
     parser.add_argument("--experiments-root", type=Path, default=Path("experiments"))
     parser.add_argument("--experiment-dir", type=Path, default=None)
@@ -157,6 +168,7 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         "effective_eval_vec_env": effective_eval_vec_env(args.vec_env, args.eval_vec_env),
         "device": args.device,
         "training_profile": args.training_profile,
+        "control_mode": args.control_mode,
         "max_episode_steps": int(args.max_episode_steps),
         "wandb": args.wandb,
         "tensorboard_log": str(tensorboard_log),
@@ -186,6 +198,7 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         n_envs=args.n_envs,
         seed=args.seed,
         training_profile=args.training_profile,
+        control_mode=args.control_mode,
         max_episode_steps=args.max_episode_steps,
         monitor_cls=Monitor,
         dummy_vec_env_cls=DummyVecEnv,

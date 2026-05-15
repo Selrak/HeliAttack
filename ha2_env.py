@@ -2326,6 +2326,54 @@ class HeliAttack2Env(gym.Env):
         self.enemy_bullets = []
 
 
+class MovementScriptedAttackDirectWrapper(gym.ActionWrapper):
+    """
+    Agent provides: [move, jump, duck, boost].
+    Wrapper provides direct aim at primary Heli, and fires if a live Heli exists.
+    """
+    def __init__(self, env: gym.Env):
+        super().__init__(env)
+        self.action_space = spaces.MultiDiscrete([3, 2, 2, 2])
+
+    def action(self, action: np.ndarray | list[int]) -> np.ndarray:
+        move_a, jump_a, duck_a, boost_a = int(action[0]), int(action[1]), int(action[2]), int(action[3])
+        
+        base_env = self.env.unwrapped
+        enemy = base_env._primary_enemy()
+        if enemy is None or not enemy.get("visible", True) or int(enemy.get("health", 0)) <= 0:
+            aim_bin = base_env.last_action[4] if hasattr(base_env, "last_action") else DEFAULT_AIM_BIN
+            fire_a = 0
+        else:
+            aim_bin = base_env.aim_bin_for_world_target(float(enemy["x"]), float(enemy["y"]))
+            fire_a = 1
+            
+        return np.array([move_a, jump_a, duck_a, boost_a, aim_bin, fire_a], dtype=np.int32)
+
+class MovementNoBoostScriptedAttackDirectWrapper(gym.ActionWrapper):
+    """
+    Agent provides: [move, jump, duck].
+    Wrapper blocks boost, provides direct aim at primary Heli, and fires if a live Heli exists.
+    """
+    def __init__(self, env: gym.Env):
+        super().__init__(env)
+        self.action_space = spaces.MultiDiscrete([3, 2, 2])
+
+    def action(self, action: np.ndarray | list[int]) -> np.ndarray:
+        move_a, jump_a, duck_a = int(action[0]), int(action[1]), int(action[2])
+        boost_a = 0
+        
+        base_env = self.env.unwrapped
+        enemy = base_env._primary_enemy()
+        if enemy is None or not enemy.get("visible", True) or int(enemy.get("health", 0)) <= 0:
+            aim_bin = base_env.last_action[4] if hasattr(base_env, "last_action") else DEFAULT_AIM_BIN
+            fire_a = 0
+        else:
+            aim_bin = base_env.aim_bin_for_world_target(float(enemy["x"]), float(enemy["y"]))
+            fire_a = 1
+            
+        return np.array([move_a, jump_a, duck_a, boost_a, aim_bin, fire_a], dtype=np.int32)
+
+
 if __name__ == "__main__":
     from scripts.play_human import main
 

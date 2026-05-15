@@ -880,6 +880,39 @@ Fix the remaining HA2 RL reporting/instrumentation bugs found by source inspecti
 ### Suggested Next Step
 - Lancer de nouvelles expérimentations RL ou analyser les résultats existants.
 
+## 2026-05-16 00:00 Europe/Paris - Movement Curriculum (M0/M1) Implementation
+
+### Task Attempted
+Implement the first movement-curriculum slice: PPO learns movement only while aim/fire are supplied by a deterministic scripted attack. Run a 100k M0/M1 comparison to isolate and evaluate movement behavior.
+
+### Files Changed or Created
+- Updated `ha2_env.py` to add `MovementScriptedAttackDirectWrapper` (agent controls `[move, jump, duck, boost]`) and `MovementNoBoostScriptedAttackDirectWrapper` (agent controls `[move, jump, duck]`). Both wrappers automatically aim at the primary Heli and fire when one exists.
+- Updated `scripts/train_parkour.py`, `scripts/evaluate_model.py`, `scripts/watch_model.py`, and `scripts/run_experiment.py` to support the `--control-mode` CLI argument, and record it in `config.json`.
+- Updated `scripts/run_experiment_pair.py` to accept `--control-mode`, `--control-mode-a`, and `--control-mode-b` to facilitate comparative experiments, and added auto-generated experiment names when modes/profiles overlap to avoid folder collisions.
+- Created `tests/test_curriculum.py` to verify the ActionSpace sizing, action translation logic, and `boost=0` constraints of the new wrappers.
+- Updated `docs/ai/CURRENT_STATE.md` and `docs/ai/CODEX_SESSION_LOG.md`.
+
+### Repository Facts Discovered
+- `DummyVecEnv` combined with standard evaluation scripts passes action arrays through unmodified to the underlying unwrapped environment if the evaluation environment itself is not wrapped with the same curriculum wrappers as the training environment. Explicitly adding `--control-mode` to the evaluation flow ensures the action arrays match dimensions.
+
+### Commands Run
+- `python -m pytest` (Passed all tests, including new curriculum tests)
+- `python -m scripts.run_experiment_pair --mode parallel --profile-a combat_bullets_v1 --profile-b combat_bullets_v1 --control-mode-a movement_no_boost_scripted_attack_direct --control-mode-b movement_scripted_attack_direct --label-a M0_no_boost --label-b M1_boost --total-timesteps 100000 --n-envs 4 --vec-env dummy --wandb off --train-eval on --eval-freq 50000 --train-eval-episodes 2 --eval-episodes 5 --save-replays --net-arch 128,128 --threads-per-job 6 --timing-profile on --seed 0 --seed-b 0`
+
+### Validation Result
+- Passed: Tests confirm `MovementNoBoostScriptedAttackDirectWrapper` successfully forces boost actions to `0` and translates to a 6-dim action space.
+- Passed: Scripted aim reliably locks onto the target coordinates.
+- Passed: 100k M0/M1 comparison runs successfully without dimension mismatch errors.
+
+### Architectural Discrepancies
+- The curriculum logic relies strictly on Gymnasium `ActionWrapper`s applied during environment instantiation. No changes were made to core `HeliAttack2Env` simulator mechanics.
+
+### Remaining Risks
+- The scripted "direct aim" attack is heuristic. If it misses significantly, the agent might learn poor movement patterns compensating for bad aim.
+
+### Suggested Next Step
+- Analyze the evaluation reports of the 100k M0 (No Boost) vs M1 (With Boost) movement curriculum experiment.
+
 ## 2026-05-15 22:30 Europe/Paris - Fix Parallel Job Duration Reporting
 
 ### Task Attempted

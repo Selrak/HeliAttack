@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import os
+import json
+import shutil
+import zipfile
+import sys
 from pathlib import Path
 import pytest
 from scripts.run_experiment_pair import get_auto_threads, create_thread_env
@@ -18,55 +22,56 @@ def test_create_thread_env():
     assert env["NUMEXPR_NUM_THREADS"] == "4"
     assert env["HA2_TORCH_NUM_THREADS"] == "4"
 
-def test_pair_orchestration_smoke(tmp_path):
+def test_parallel_staggered_durations():
     from scripts import run_experiment_pair
-    import json
-    
-    root = tmp_path / "experiments"
-    root.mkdir()
     
     args = [
-        "--mode", "sequential",
-        "--profile-a", "combat_v1",
-        "--profile-b", "combat_v1",
-        "--total-timesteps", "100",
+        "--mode", "parallel",
+        "--profile-a", "legacy",
+        "--profile-b", "legacy",
+        "--total-timesteps", "10",
         "--n-envs", "1",
         "--vec-env", "dummy",
-        "--train-eval", "off",
         "--wandb", "off",
-        "--timing-profile", "on",
-        "--torch-num-threads", "1",
-        "--net-arch", "32,32",
-        "--seed", "42",
-        "--seed-b", "99",
+        "--train-eval", "off",
+        "--eval-episodes", "1",
+        "--stagger-seconds", "2",
+        "--timing-profile", "off"
     ]
     
-    # We must patch sys.argv temporarily because run_experiment_pair uses parse_args() without args_list
-    import sys
     old_argv = sys.argv
     sys.argv = ["run_experiment_pair.py"] + args
     
-    # Change CWD or patch the root_log_dir so we don't litter the real experiments folder
-    # Actually run_experiment_pair hardcodes Path(f"experiments/pair_{timestamp}")
-    # It's cleaner to test the components directly if we can't easily mock the path.
-    # Instead, let's just run it as a subprocess to be safe, with a small trick to set CWD
-    sys.argv = old_argv
-    
-    import subprocess
-    env = os.environ.copy()
-    
-    cmd = [sys.executable, "-m", "scripts.run_experiment_pair"] + args
-    
-    # Run it in the real repo root to get the python path right, 
-    # but we will have to clean up the pair_... folder later, or just let it be.
-    # Wait, the prompt says "Keep tests short."
-    # Let's just run the run_experiment smoke test instead and check its output.
-    pass
+    # Run it in the real repo root to get the python path right
+    try:
+        run_experiment_pair.main()
+        
+        # Sort to find the latest
+        pairs = sorted(list(Path("experiments").glob("pair_*")), key=lambda p: p.stat().st_mtime)
+        assert len(pairs) >= 1
+        latest_pair = pairs[-1]
+        
+        with open(latest_pair / "pair_summary.json", "r") as f:
+            summary = json.load(f)
+            
+        job_a = summary["parallel"]["job_a"]
+        job_b = summary["parallel"]["job_b"]
+        total = summary["parallel"]["total_parallel_duration"]
+        
+        # 10 timesteps on legacy profile should take < 1.0 seconds to run.
+        # But stagger is 2 seconds. Job B starts after 2s.
+        # So Job B's own duration must not include the 2s wait!
+        assert job_b["duration_seconds"] < 2.0, f"Job B duration {job_b['duration_seconds']} should not include stagger"
+        assert total >= 2.0, f"Total duration {total} must include stagger"
+        
+        # Cleanup
+        shutil.rmtree(latest_pair)
+        
+    finally:
+        sys.argv = old_argv
 
 def test_run_experiment_outputs_and_bundle(tmp_path):
     from scripts import run_experiment
-    import sys
-    import shutil
     
     exp_dir = Path("experiments") / "test_bundle_smoke"
     if exp_dir.exists():
@@ -87,14 +92,14 @@ def test_run_experiment_outputs_and_bundle(tmp_path):
     sys.argv = ["run_experiment.py"] + args
     
     # Run it
-    run_experiment.main()
-    sys.argv = old_argv
+    try:
+        run_experiment.main()
+    finally:
+        sys.argv = old_argv
     
-    exp_dir = Path("experiments") / "test_bundle_smoke"
     assert exp_dir.exists()
     
     # Check net-arch in config
-    import json
     with open(exp_dir / "config.json") as f:
         config = json.load(f)
     assert config["net_arch"] == "32,32"
@@ -108,7 +113,6 @@ def test_run_experiment_outputs_and_bundle(tmp_path):
     assert isinstance(eval_report["metrics"]["frames_grounded"]["mean"], float)
     
     # Check diagnostic bundle
-    import zipfile
     bundle_path = exp_dir / "test_bundle_smoke_diagnostic_bundle.zip"
     assert bundle_path.exists()
     
@@ -129,5 +133,4 @@ def test_run_experiment_outputs_and_bundle(tmp_path):
     assert timing_report["train_update_count"] == timing_report["rollout_count"]
     
     # Cleanup
-    import shutil
     shutil.rmtree(exp_dir)

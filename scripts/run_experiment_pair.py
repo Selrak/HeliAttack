@@ -95,6 +95,9 @@ def main() -> None:
     parser.add_argument("--mode", choices=["sequential", "parallel", "both"], default="both")
     parser.add_argument("--profile-a", default="combat_v1")
     parser.add_argument("--profile-b", default="combat_bullets_v1")
+    parser.add_argument("--control-mode", default="full", help="Default control mode for both jobs")
+    parser.add_argument("--control-mode-a", default=None, help="Control mode for job A (overrides --control-mode)")
+    parser.add_argument("--control-mode-b", default=None, help="Control mode for job B (overrides --control-mode)")
     parser.add_argument("--label-a", default="job_a")
     parser.add_argument("--label-b", default="job_b")
     parser.add_argument("--seed", type=int, default=0, help="Seed for job A (and job B if --seed-b is not set)")
@@ -153,9 +156,15 @@ def main() -> None:
         pair_dir = root_log_dir / mode_name
         pair_dir.mkdir(exist_ok=True)
         
-        args_a = common_args + ["--training-profile", args.profile_a, "--seed", str(args.seed)]
+        control_mode_a = args.control_mode_a if args.control_mode_a is not None else args.control_mode
+        control_mode_b = args.control_mode_b if args.control_mode_b is not None else args.control_mode
+        args_a = common_args + ["--training-profile", args.profile_a, "--control-mode", control_mode_a, "--seed", str(args.seed)]
         seed_b = args.seed_b if args.seed_b is not None else args.seed
-        args_b = common_args + ["--training-profile", args.profile_b, "--seed", str(seed_b)]
+        args_b = common_args + ["--training-profile", args.profile_b, "--control-mode", control_mode_b, "--seed", str(seed_b)]
+
+        # Prevent collisions if both jobs share the same profile and start at the same minute
+        args_a.extend(["--experiment-name", f"{args.profile_a}_{control_mode_a}_{args.total_timesteps}_a"])
+        args_b.extend(["--experiment-name", f"{args.profile_b}_{control_mode_b}_{args.total_timesteps}_b"])
         
         mode_results = {}
         
@@ -175,6 +184,7 @@ def main() -> None:
             
             start_dt_a = datetime.now()
             start_tick_total = time.perf_counter()
+            start_tick_a = start_tick_total
             
             print(f"[{start_dt_a.strftime('%H:%M:%S')}] Starting Job A...")
             f_out_a = open(stdout_a, "w")
@@ -186,6 +196,7 @@ def main() -> None:
                 time.sleep(args.stagger_seconds)
             
             start_dt_b = datetime.now()
+            start_tick_b = time.perf_counter()
             print(f"[{start_dt_b.strftime('%H:%M:%S')}] Starting Job B...")
             f_out_b = open(stdout_b, "w")
             f_err_b = open(stderr_b, "w")
@@ -220,8 +231,8 @@ def main() -> None:
 
             exp_a = get_exp(stdout_a)
             exp_b = get_exp(stdout_b)
-            mode_results["job_a"] = JobResult(cmd_a, str(stdout_a), str(stderr_a), exit_a, start_dt_a.isoformat(), datetime.now().isoformat(), end_tick_a - start_tick_total, exp_a, get_timing(exp_a))
-            mode_results["job_b"] = JobResult(cmd_b, str(stdout_b), str(stderr_b), exit_b, start_dt_b.isoformat(), datetime.now().isoformat(), end_tick_b - start_tick_total, exp_b, get_timing(exp_b))
+            mode_results["job_a"] = JobResult(cmd_a, str(stdout_a), str(stderr_a), exit_a, start_dt_a.isoformat(), datetime.now().isoformat(), end_tick_a - start_tick_a, exp_a, get_timing(exp_a))
+            mode_results["job_b"] = JobResult(cmd_b, str(stdout_b), str(stderr_b), exit_b, start_dt_b.isoformat(), datetime.now().isoformat(), end_tick_b - start_tick_b, exp_b, get_timing(exp_b))
             mode_results["total_parallel_duration"] = total_duration
 
         return mode_results
@@ -353,7 +364,7 @@ def main() -> None:
                 break
     if failed:
         print("One or more jobs failed.")
-        exit(1)
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

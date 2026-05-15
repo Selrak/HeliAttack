@@ -92,6 +92,7 @@ def build_evaluation_report(
         "model": str(model_path),
         "model_choice": effective_model_choice,
         "training_profile": training_profile,
+        "control_mode": experiment_config.get("control_mode", "full"),
         "max_episode_steps": max_episode_steps,
         "episodes": episodes,
         "net_arch": experiment_config.get("net_arch"),
@@ -172,6 +173,7 @@ def main(args_list: list[str] | None = None) -> None:
     parser.add_argument("--report-name", type=str, default=None)
     parser.add_argument("--replay-prefix", type=str, default=None)
     parser.add_argument("--training-profile", choices=["legacy", "combat_v1", "combat_bullets_v1"], default="combat_v1")
+    parser.add_argument("--control-mode", choices=["full", "movement_scripted_attack_direct", "movement_no_boost_scripted_attack_direct"], default="full")
     parser.add_argument("--max-episode-steps", type=int, default=1800)
     args = parser.parse_args(args_list)
 
@@ -190,6 +192,8 @@ def main(args_list: list[str] | None = None) -> None:
                 config = json.load(f)
                 if "training_profile" in config:
                     args.training_profile = config["training_profile"]
+                if "control_mode" in config:
+                    args.control_mode = config["control_mode"]
 
     model_path = resolve_model_path(
         model=args.model,
@@ -240,6 +244,13 @@ def main(args_list: list[str] | None = None) -> None:
             training_profile=args.training_profile,
             max_episode_steps=args.max_episode_steps,
         )
+        if args.control_mode == "movement_scripted_attack_direct":
+            from ha2_env import MovementScriptedAttackDirectWrapper
+            env = MovementScriptedAttackDirectWrapper(env)
+        elif args.control_mode == "movement_no_boost_scripted_attack_direct":
+            from ha2_env import MovementNoBoostScriptedAttackDirectWrapper
+            env = MovementNoBoostScriptedAttackDirectWrapper(env)
+            
         obs, _info = env.reset(seed=args.seed + episode)
         writer = None
         if args.save_replays:

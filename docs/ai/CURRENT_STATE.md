@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-14 Europe/Paris
+Last updated: 2026-05-16 Europe/Paris
 
 ## What Appears to Work
 - Python 3.11.9 is available locally; `.venv` has pytest and SB3 installed.
@@ -23,38 +23,27 @@ Last updated: 2026-05-14 Europe/Paris
 - `scripts/export_ffdec_reference.ps1` can export broad FFDEC reference data from a SWF and auto-detects `C:\Program Files (x86)\FFDec\ffdec-cli.exe`.
 - `training_profile="combat_v1"` is available as an opt-in RL interface: 37-field bounded float32 vector observation, combat-aware reward, player-death/fall termination, and max-step truncation.
 - `training_profile="combat_bullets_v1"` is available, extending the observation to 84 dimensions by replacing the single nearest bullet with a top-10 visible bullet block to enable defensive maneuvering.
-- `scripts.train_parkour`, `scripts.evaluate_model`, and `scripts.watch_model` default to `combat_v1` with `max_episode_steps=1800` but support `combat_bullets_v1`.
+- `scripts.train_parkour`, `scripts.evaluate_model`, and `scripts.watch_model` default to `combat_v1` but support `combat_bullets_v1` and the new `--control-mode`.
+- Curriculum `ActionWrapper`s are implemented in `ha2_env.py`: `movement_scripted_attack_direct` (agent controls 4 movement axes) and `movement_no_boost_scripted_attack_direct` (agent controls 3 axes). Both use a deterministic heuristic to aim and fire at the primary Heli.
 - Experiments are now the default unit of RL artifact storage: `scripts.train_parkour` creates `experiments/ha2_000001_YYYYMMDD_HHMM_combat-v1_1k/`-style runs with `config.json`, `git_info.txt`, `summary.md`, `models/`, `reports/`, `replays/`, and `tensorboard/`.
-- `scripts.evaluate_model` can resolve `best` and `latest` model files from an experiment and writes eval reports/replays inside that experiment by default.
-- `scripts.watch_model` can resolve experiment-scoped `best` and `latest` models and can auto-name optional replay/GIF outputs under the experiment.
+- `scripts.evaluate_model` and `scripts.watch_model` resolve `best`/`latest` models from an experiment and auto-detect the correct `control_mode` from `config.json`.
 - `scripts.play_replay` and `scripts.watch_model` now support an `F` fast-forward toggle for faster GUI inspection.
-- Visual startup was profiled again on 2026-05-14. Normal env first-render startup is still mostly import-bound at about `0.68-0.72s` in dummy video mode; `watch_model` with a real model is dominated by SB3 import and model load at about `5.8s` total.
-- `watch_model` now defers Pygame/env/replay imports until after model path resolution and SB3 model load, and GIF NumPy import remains lazy.
-- Pygame support prompt output is suppressed before Pygame import in the visual entry points and env module.
-- `scripts.run_experiment` is now available as a bounded training orchestration layer that runs training and then evaluation on both the `best` and `latest` models, producing a complete experiment folder and an updated `summary.md`.
-- `scripts.train_parkour` and `scripts.run_experiment` support optional `--vec-env dummy|subproc`; the default remains `dummy`.
-- `scripts.train_parkour` supports `--train-eval on|off`, `--eval-freq`, `--train-eval-episodes`, and `--eval-vec-env dummy|subproc|same`.
-- `scripts.benchmark_vec_envs` supports `--mode train-only|workflow|both`, records eval wrapper match/warning status, and writes JSON/Markdown reports under `reports/vec_env_benchmarks/`.
-- `ha2_env.py` tracks detailed firing metrics and movement diagnostics (grounded/airborne frames, boost activations, lateral range).
-- `scripts.train_parkour` and `scripts.run_experiment` support `--net-arch` for custom PPO policy network sizes.
-- `scripts.evaluate_model` produces an evaluation JSON report that includes aggregate combat diagnostics, movement metrics, and policy capacity metadata.
-- Evaluation now includes visible enemy-bullet diagnostics, top-10 visible-bullet pressure counters, damage timing, and damage-free streak metrics. Off-screen enemy bullets are excluded from the player-visible defensive denominator.
-- `docs/ai/OBSERVATION_AUDIT.md` documents that `combat_v1` exposes one nearest engine-side enemy bullet, including velocity, but not all visible bullets.
-- Experiments can now be synchronized across machines using WandB Artifacts. `scripts.run_experiment` (with `--wandb on`) automatically uploads the experiment folder, and `scripts.sync_experiment` downloads it to other machines.
-- Local configuration via `.env` is supported for setting `WANDB_API_KEY`, `WANDB_ENTITY`, and `WANDB_PROJECT` on a per-folder basis.
-- Charles manually exercised GUI play/replay checks after the scripted trace phase and reported they looked OK.
+- `scripts.run_experiment` orchestrates training and evaluation, supporting `--net-arch`, `--control-mode`, and producing consolidated diagnostic bundles.
+- `scripts.run_experiment_pair` supports comparative A/B benchmarks with individual `duration_seconds` reporting and consolidated Super-Bundles.
+- `ha2_env.py` tracks detailed firing metrics and movement diagnostics (grounded/airborne frames, boost activations, lateral range), evaluated after physics execution.
+- Policy architecture and parameter counts are recorded in `config.json`.
+- PPO runtime timing (rollout vs training vs overhead) is tracked and reported using the `TimedPPO` subclass.
+- Experiments can now be synchronized across machines using WandB Artifacts.
+- Charles manually exercised GUI play/replay checks and reported they looked OK.
 
 ## What Is Unknown
-- SB3 smoke runs, but model quality is not meaningful from the 1000-step validation run.
-- Scripted traces are Python simulator traces only; they have not been compared against Flash yet.
+- SB3 model quality is not meaningful from the 100k curriculum runs; agents mostly learn to charge right with the auto-aim.
+- Scripted traces have not been compared against Flash yet.
 - AS bit-for-bit parity is a goal, but no parity test harness was found.
-- GIF recording still needs manual validation.
-- MachineGun GUI firing/replay rendering still needs Charles manual feel/parity checks.
-- New Heli gun/enemy-bullet GUI feel still needs Charles manual checks.
-- `scripts.watch_model` manual GUI validation was not run during the experiment-directory pass.
-- Fast-forward GUI behavior has not yet been manually evaluated for feel or frame pacing.
-- SubprocVecEnv works in Windows smoke runs, including `--eval-vec-env same`; local tiny benchmarks still favor DummyVecEnv by wall-clock.
-- The new defensive diagnostics need review on real 500k experiments; current validation only used a 1000-step smoke model.
+- MachineGun/Heli combat GUI feel still needs Charles manual checks.
+- Exact Flash sprite visibility is not proven for defensive diagnostics.
+- Model pickling errors during `EvalCallback` checkpoints are resolved via `TimedPPO`, but broad cross-platform serialization needs further verification.
+- "Ghost" boost activations in M0 curriculum reports (even when wrapper forces `boost=0`) need investigation.
 
 ## Current Architecture
 - `ha2_env.py` contains the main runtime architecture: environment state, player physics, default MachineGun/bullets, one default Heli enemy target, collision checks against `const.FULL_MAP_DATA`, rendering, and state/hash debug hooks.
