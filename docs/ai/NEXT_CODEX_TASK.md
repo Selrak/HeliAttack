@@ -2,161 +2,112 @@
 
 ## Goal
 
-Fix horizontal-movement diagnostics and clarify training-time eval frequency.
+Implement and test the first defensive curriculum reward profile:
 
-This is diagnostics/reporting only. Do not change simulator mechanics, rewards, observations, action spaces, PPO defaults, replay determinism, or curriculum control modes.
+- `M0_defense`: no boost, scripted direct attack, defensive reward.
+- `M1_defense`: boost allowed, scripted direct attack, defensive reward.
 
-## Context
-
-Replay inspection suggests the movement-curriculum agents may camp near the world edge rather than performing useful lateral dodging.
-
-Source inspection found concrete diagnostic issues:
-
-- `min_player_x` and `max_player_x` are initialized/exported but not updated during `step()`.
-- `frames_moving_left/right` currently count requested movement inputs, not actual post-physics horizontal movement.
-- `evaluate_model.py` tracks `max_x` locally, but not `min_x`, true x-range, actual dx, or edge-camping.
-- `--eval-freq` is still confusing because SB3 counts VecEnv callback calls, not raw environment transitions.
+The goal is to make bullet avoidance matter much more than merely surviving long enough to kill Helis.
 
 ## Non-goals
 
-Do not add anti-wall-camping reward shaping yet.
+Do not change HA2 mechanics, physics, bullets, Heli logic, observations, action spaces, replay determinism, or existing default rewards.
 
-Do not penalize jumping, ducking, boosting, or edge usage.
+Do not remove boost.
 
-Do not rerun long 100k/500k experiments unless explicitly asked.
+Do not add new observation fields yet.
 
-## Files to inspect first
+Do not run 500k yet.
 
-- `ha2_env.py`
-- `scripts/evaluate_model.py`
-- `scripts/train_parkour.py`
-- `scripts/run_experiment.py`
-- `scripts/run_experiment_pair.py`
-- `tests/test_rl_diagnostics.py`
-- `tests/test_curriculum.py`
+## Context
 
-## Implementation plan
+Current M0/M1 curriculum works mechanically:
 
-### 1. Fix `min_player_x` / `max_player_x`
+- M0 uses `movement_no_boost_scripted_attack_direct`.
+- M1 uses `movement_scripted_attack_direct`.
+- Both use `combat_bullets_v1`, which already exposes visible enemy bullet relative positions and bullet velocity fields.
 
-In `ha2_env.step()`, after physics/collision resolution and before returning `info`, update:
+Current problem:
 
-- `min_player_x`
-- `max_player_x`
-- `player_x_range`
+- M0 tends to camp/stall and die.
+- M1 performs much better, but mainly through boost-heavy survival.
+- We need a reward profile that strongly rewards not taking damage while still requiring offensive progress, without rewarding passive hiding/camping.
 
-Use the actual final post-physics `self._x`.
+## Implementation
 
-### 2. Split requested movement from actual movement
+Add a new opt-in reward profile:
 
-Keep backward compatibility if useful, but make semantics explicit.
+- `combat_default`: current reward, default, unchanged.
+- `defense_v1`: new curriculum reward.
 
-Preferred new metrics:
+Add `reward_profile` to `HeliAttack2Env`, config, summaries, eval reports, replays if practical, and CLIs:
 
-- `frames_pressing_left`
-- `frames_pressing_right`
-- `frames_pressing_neutral`
+- `scripts.train_parkour`
+- `scripts.run_experiment`
+- `scripts.run_experiment_pair`
+- `scripts.evaluate_model`
+- `scripts.watch_model`
 
-and separately:
+Evaluation/watch should infer `reward_profile` from `config.json` when given an experiment.
 
-- `frames_actual_moving_left`
-- `frames_actual_moving_right`
-- `frames_actual_not_moving_horizontally`
-- `mean_abs_player_dx`
-- `sum_abs_player_dx`
+## Suggested `defense_v1` reward
 
-Compute actual movement from:
+Keep exact constants easy to find in code.
 
-- `previous_x` saved at the start of `step()`;
-- `dx = self._x - previous_x` after physics/collision.
+Initial proposal:
 
-Use a small epsilon to avoid floating noise.
+- living: `0.0`
+- enemy damage: `0.03 * score_delta`
+- Heli kill: `3.0 * killed_helis`
+- player damage: `-1.0 * player_damage`
+  - so one 10-damage bullet costs `-10`
+- terminal death/fall: `-50.0`
+- mild edge/input inefficiency penalty:
+  - small penalty when pressing into a physical edge/wall without actual horizontal movement;
+  - small penalty for prolonged edge camping;
+  - do not over-penalize brief tactical edge contact.
 
-### 3. Add wall/edge-camping diagnostics
+Expose all terms in `reward_breakdown`.
 
-Track:
+Do not penalize boost, jump, or duck directly.
 
-- `frames_at_left_edge`
-- `frames_at_right_edge`
-- `fraction_at_left_edge`
-- `fraction_at_right_edge`
-- `max_consecutive_frames_at_left_edge`
-- `max_consecutive_frames_at_right_edge`
-- `frames_pressing_left_at_left_edge`
-- `frames_pressing_right_at_right_edge`
+## Anti-camping scope
 
-Compute edge state from actual position with a documented tolerance.
+Use existing/new diagnostics only.
 
-Prefer using helpers based on the same boundary formulas implied by collision handling, not arbitrary magic values.
+For now, penalize:
 
-### 4. Add input-vs-motion mismatch diagnostics
+- prolonged left/right edge camping;
+- repeated horizontal input with no actual horizontal movement.
 
-Add derived metrics:
+Do not attempt full line-of-sight or “hiding behind scenery” detection yet unless it is trivial and robust.
 
-- `left_press_effective_motion_rate`
-- `right_press_effective_motion_rate`
-- `horizontal_action_without_motion_fraction`
+The reward must still require offensive progress through enemy damage/kills, so passive hiding with no hits should not be attractive.
 
-This must catch the case where the policy holds left while blocked by the world edge.
-
-### 5. Update evaluation reports
-
-Update `scripts/evaluate_model.py` so `eval_latest.json`, `eval_best.json`, `episodes_detail`, and aggregate `metrics` include:
-
-- `episode_min_x`
-- `episode_max_x`
-- `episode_x_range`
-- `player_x_range`
-- actual movement counters;
-- edge-camping counters;
-- input-vs-motion mismatch rates.
-
-The report should make it obvious whether the agent is actually traversing the map or just pressing directions while stuck.
-
-### 6. Clarify eval frequency semantics
-
-Do not silently change existing `--eval-freq`.
+## Pair runner support
 
 Add:
 
-- `--eval-freq-timesteps`
+- `--reward-profile`
+- `--reward-profile-a`
+- `--reward-profile-b`
 
-If provided, convert raw timesteps to SB3 VecEnv callback steps:
+to `scripts.run_experiment_pair.py`.
 
-- `eval_freq_vec_steps = max(1, eval_freq_timesteps // n_envs)`
+Common `--reward-profile` should apply to both jobs unless overridden.
 
-If both `--eval-freq` and `--eval-freq-timesteps` are passed, fail clearly.
+## Tests
 
-Record in config/summary/timing:
+Add tests for:
 
-- `eval_freq`
-- `eval_freq_timesteps`
-- `effective_eval_freq_vec_steps`
-- `n_envs`
-- estimated expected training eval count.
-
-Pass this through `run_experiment.py` and `run_experiment_pair.py`.
-
-### 7. Add replay-inspection convenience
-
-In experiment and pair summaries, include concise copy-paste replay commands for produced latest eval replays, for example:
-
-- `.venv\Scripts\python.exe -m scripts.play_replay <path>`
-
-Keep this short.
-
-### 8. Tests
-
-Add or update tests that fail on the current bug:
-
-- `min_player_x/max_player_x` update when the player moves.
-- `episode_min_x/max_x/x_range` are correct in an eval smoke.
-- requested movement counters and actual movement counters are distinct.
-- holding left against the left edge increments edge/blocked diagnostics.
-- `horizontal_action_without_motion_fraction` is nonzero when pressing into a wall.
-- `--eval-freq-timesteps` converts correctly for `n_envs=1` and `n_envs=4`.
-- passing both `--eval-freq` and `--eval-freq-timesteps` fails clearly.
-- reports contain the new metrics.
+- default reward unchanged for `combat_default`;
+- `defense_v1` applies much stronger player-damage penalty;
+- `reward_profile` is stored in `config.json`;
+- `evaluate_model` reports `reward_profile`;
+- `run_experiment_pair` forwards A/B reward profiles correctly;
+- M0 still produces no boost with `defense_v1`;
+- M1 still allows boost with `defense_v1`;
+- reward breakdown contains all `defense_v1` terms.
 
 Keep tests short.
 
@@ -164,51 +115,63 @@ Keep tests short.
 
 Run:
 
-- `.venv\Scripts\python.exe -m py_compile ha2_env.py scripts/evaluate_model.py scripts/train_parkour.py scripts/run_experiment.py scripts/run_experiment_pair.py`
+- `.venv\Scripts\python.exe -m py_compile ha2_env.py scripts/train_parkour.py scripts/evaluate_model.py scripts/run_experiment.py scripts/run_experiment_pair.py scripts/watch_model.py`
 - `.venv\Scripts\python.exe -m pytest`
 
-Run a small M0/M1 smoke:
+Run quick smokes:
 
-- `.venv\Scripts\python.exe -m scripts.run_experiment_pair --mode parallel --profile-a combat_bullets_v1 --profile-b combat_bullets_v1 --control-mode-a movement_no_boost_scripted_attack_direct --control-mode-b movement_scripted_attack_direct --label-a M0_no_boost --label-b M1_boost --total-timesteps 10000 --n-envs 4 --vec-env dummy --wandb off --train-eval on --eval-freq-timesteps 5000 --train-eval-episodes 1 --eval-episodes 2 --save-replays --net-arch 128,128 --threads-per-job 6 --timing-profile on --seed 0 --seed-b 0`
+- `.venv\Scripts\python.exe -m scripts.run_experiment --training-profile combat_bullets_v1 --control-mode movement_no_boost_scripted_attack_direct --reward-profile defense_v1 --total-timesteps 1000 --n-envs 1 --vec-env dummy --wandb off --train-eval off --eval-episodes 1 --save-replays --timing-profile on --torch-num-threads 2 --net-arch 128,128`
 
-Inspect and report:
+- `.venv\Scripts\python.exe -m scripts.run_experiment --training-profile combat_bullets_v1 --control-mode movement_scripted_attack_direct --reward-profile defense_v1 --total-timesteps 1000 --n-envs 1 --vec-env dummy --wandb off --train-eval off --eval-episodes 1 --save-replays --timing-profile on --torch-num-threads 2 --net-arch 128,128`
 
-- pair path;
-- M0/M1 experiment paths;
-- effective eval frequency;
-- train eval count;
-- min/max/range X;
-- actual horizontal movement fractions;
-- edge-camping fractions;
+Then run the first real comparison:
+
+- `.venv\Scripts\python.exe -m scripts.run_experiment_pair --mode parallel --profile-a combat_bullets_v1 --profile-b combat_bullets_v1 --control-mode-a movement_no_boost_scripted_attack_direct --control-mode-b movement_scripted_attack_direct --reward-profile-a defense_v1 --reward-profile-b defense_v1 --label-a M0_defense --label-b M1_defense --total-timesteps 100000 --n-envs 4 --vec-env dummy --wandb off --train-eval on --eval-freq-timesteps 50000 --train-eval-episodes 2 --eval-episodes 5 --save-replays --net-arch 128,128 --threads-per-job 6 --timing-profile on --seed 0 --seed-b 0`
+
+## Inspect after 100k
+
+Report for M0_defense and M1_defense:
+
+- reward;
+- Heli kills;
+- player damage;
+- death rate;
+- visible bullet hit rate;
+- time to first damage;
+- longest damage-free streak;
+- damage-free episode rate;
+- player x range;
+- left/right edge fractions;
 - max consecutive edge frames;
-- input-vs-motion mismatch;
+- actual horizontal movement fractions;
+- input-motion mismatch rate;
+- boost pressed / ready / activations;
 - replay commands.
-
-Verify generated eval replays.
 
 ## Acceptance criteria
 
 Complete only if:
 
-- `min_player_x/max_player_x/player_x_range` are trustworthy.
-- Reports distinguish requested movement from actual movement.
-- Edge-camping is explicitly measured.
-- Pressing into a wall is measurable.
-- `--eval-freq-timesteps` works and is recorded.
-- Summaries include replay commands.
-- All tests pass.
-- Existing full-action and curriculum training still work.
-- No mechanics/reward/observation/action-space changes are made.
+- `combat_default` reward is unchanged;
+- `defense_v1` is opt-in and recorded everywhere;
+- M0_defense and M1_defense train/evaluate successfully;
+- M0_defense still has no boost in replay actions;
+- M1_defense still allows boost;
+- reports expose `reward_breakdown` and `reward_profile`;
+- 100k comparison completes;
+- diagnostic bundles include reports/replays/timing;
+- no simulator mechanics or observations are changed.
 
 ## Stop conditions
 
 Stop and report if:
 
-- true edge detection is ambiguous without changing collision mechanics;
-- new diagnostics would change replay hashes/state;
-- `--eval-freq-timesteps` conflicts with SB3 behavior in a non-obvious way;
-- tests become slow or flaky;
-- fixing this would require reward shaping.
+- reward-profile plumbing would require changing core mechanics;
+- old experiments cannot be evaluated because of missing `reward_profile`;
+- M0 produces any boost action;
+- defense reward creates obvious passive no-attack behavior in smoke replays;
+- replay verification breaks;
+- tests become slow or flaky.
 
 ## Required log update
 
@@ -218,14 +181,14 @@ Update:
 - `docs/ai/VALIDATION.md`
 - `docs/ai/CODEX_SESSION_LOG.md`
 
-Log:
+Include:
 
 - files changed;
 - commands run;
 - pass/fail result;
-- smoke paths;
-- new diagnostic values;
-- eval-frequency behavior;
+- smoke experiment paths;
+- 100k pair path;
+- key M0_defense/M1_defense metrics;
 - replay commands;
 - remaining risks;
 - suggested next step.

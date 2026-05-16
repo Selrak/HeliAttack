@@ -18,6 +18,7 @@ from ha2_env import (
     CONTROL_MODES,
     FULL_SIM_ACTION_NVEC,
     make_controlled_env,
+    REWARD_PROFILES,
 )
 from scripts.experiment_utils import (
     create_experiment_layout,
@@ -47,6 +48,7 @@ class EnvFactory:
     training_profile: str
     max_episode_steps: int
     control_mode: str = "full"
+    reward_profile: str = "combat_default"
 
     def __call__(self):
         from stable_baselines3.common.monitor import Monitor
@@ -55,6 +57,7 @@ class EnvFactory:
             render_mode=None,
             control_mode=self.control_mode,
             training_profile=self.training_profile,
+            reward_profile=self.reward_profile,
             max_episode_steps=self.max_episode_steps,
         )
         env.reset(seed=self.seed + self.rank)
@@ -72,6 +75,7 @@ def make_vec_env(
     dummy_vec_env_cls,
     subproc_vec_env_cls,
     control_mode: str = "full",
+    reward_profile: str = "combat_default",
 ):
     env_fns = [
         EnvFactory(
@@ -80,6 +84,7 @@ def make_vec_env(
             training_profile=training_profile,
             max_episode_steps=max_episode_steps,
             control_mode=control_mode,
+            reward_profile=reward_profile,
         )
         for i in range(n_envs)
     ]
@@ -110,6 +115,7 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
     parser.add_argument("--tensorboard-log", type=Path, default=None)
     parser.add_argument("--wandb", choices=["off", "on"], default="off")
     parser.add_argument("--training-profile", choices=["legacy", "combat_v1", "combat_bullets_v1"], default="combat_v1")
+    parser.add_argument("--reward-profile", choices=sorted(REWARD_PROFILES), default="combat_default")
     parser.add_argument("--control-mode", choices=sorted(CONTROL_MODES), default=CONTROL_MODE_FULL)
     parser.add_argument("--max-episode-steps", type=int, default=1800)
     parser.add_argument("--experiments-root", type=Path, default=Path("experiments"))
@@ -176,6 +182,7 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         "effective_eval_vec_env": effective_eval_vec_env(args.vec_env, args.eval_vec_env),
         "device": args.device,
         "training_profile": args.training_profile,
+        "reward_profile": args.reward_profile,
         "control_mode": args.control_mode,
         "max_episode_steps": int(args.max_episode_steps),
         "wandb": args.wandb,

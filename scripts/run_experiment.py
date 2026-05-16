@@ -7,7 +7,7 @@ import zipfile
 
 from scripts import train_parkour
 from scripts import evaluate_model
-from ha2_env import CONTROL_MODE_FULL, CONTROL_MODES
+from ha2_env import CONTROL_MODE_FULL, CONTROL_MODES, REWARD_PROFILES
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Orchestrate HA2 PPO training and evaluation.")
@@ -26,6 +26,7 @@ def main() -> None:
     parser.add_argument("--experiment-name", type=str, default=None)
     parser.add_argument("--save-replays", action="store_true")
     parser.add_argument("--training-profile", choices=["legacy", "combat_v1", "combat_bullets_v1"], default="combat_v1")
+    parser.add_argument("--reward-profile", choices=sorted(REWARD_PROFILES), default="combat_default")
     parser.add_argument("--control-mode", choices=sorted(CONTROL_MODES), default=CONTROL_MODE_FULL)
     parser.add_argument("--max-episode-steps", type=int, default=1800)
     parser.add_argument("--watch", action="store_true")
@@ -48,6 +49,7 @@ def main() -> None:
         "--device", str(args.device),
         "--wandb", args.wandb,
         "--training-profile", args.training_profile,
+        "--reward-profile", args.reward_profile,
         "--control-mode", args.control_mode,
         "--max-episode-steps", str(args.max_episode_steps),
         "--no-wandb-finish",

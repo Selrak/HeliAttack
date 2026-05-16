@@ -40,8 +40,9 @@ def main(args_list: list[str] | None = None) -> None:
     parser.add_argument("--save-replay", nargs="?", const=DEFAULT_OUTPUT, default=None, type=str)
     parser.add_argument("--record-gif", nargs="?", const=DEFAULT_OUTPUT, default=None, type=str)
     parser.add_argument("--training-profile", choices=["legacy", "combat_v1", "combat_bullets_v1"], default="combat_v1")
-    from ha2_env import CONTROL_MODE_FULL, CONTROL_MODES
+    from ha2_env import CONTROL_MODE_FULL, CONTROL_MODES, REWARD_PROFILES
     parser.add_argument("--control-mode", choices=sorted(CONTROL_MODES), default=CONTROL_MODE_FULL)
+    parser.add_argument("--reward-profile", choices=sorted(REWARD_PROFILES), default="combat_default")
     parser.add_argument("--max-episode-steps", type=int, default=1800)
     args = parser.parse_args(args_list)
 
@@ -58,6 +59,10 @@ def main(args_list: list[str] | None = None) -> None:
                 config = json.load(f)
                 if "training_profile" in config:
                     args.training_profile = config["training_profile"]
+                if "control_mode" in config:
+                    args.control_mode = config["control_mode"]
+                if "reward_profile" in config:
+                    args.reward_profile = config["reward_profile"]
                 if "control_mode" in config:
                     args.control_mode = config["control_mode"]
     model_path = resolve_model_path(

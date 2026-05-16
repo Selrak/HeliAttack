@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Dict
 
-from ha2_env import CONTROL_MODE_FULL, CONTROL_MODES
+from ha2_env import CONTROL_MODE_FULL, CONTROL_MODES, REWARD_PROFILES
 
 @dataclass
 class JobResult:
@@ -100,6 +100,9 @@ def main() -> None:
     parser.add_argument("--control-mode", choices=sorted(CONTROL_MODES), default=CONTROL_MODE_FULL, help="Default control mode for both jobs")
     parser.add_argument("--control-mode-a", choices=sorted(CONTROL_MODES), default=None, help="Control mode for job A (overrides --control-mode)")
     parser.add_argument("--control-mode-b", choices=sorted(CONTROL_MODES), default=None, help="Control mode for job B (overrides --control-mode)")
+    parser.add_argument("--reward-profile", choices=sorted(REWARD_PROFILES), default="combat_default", help="Default reward profile for both jobs")
+    parser.add_argument("--reward-profile-a", choices=sorted(REWARD_PROFILES), default=None, help="Reward profile for job A (overrides --reward-profile)")
+    parser.add_argument("--reward-profile-b", choices=sorted(REWARD_PROFILES), default=None, help="Reward profile for job B (overrides --reward-profile)")
     parser.add_argument("--label-a", default="job_a")
     parser.add_argument("--label-b", default="job_b")
     parser.add_argument("--seed", type=int, default=0, help="Seed for job A (and job B if --seed-b is not set)")
@@ -180,6 +183,8 @@ def main() -> None:
         
         control_mode_a = args.control_mode_a if args.control_mode_a is not None else args.control_mode
         control_mode_b = args.control_mode_b if args.control_mode_b is not None else args.control_mode
+        reward_profile_a = args.reward_profile_a if args.reward_profile_a is not None else args.reward_profile
+        reward_profile_b = args.reward_profile_b if args.reward_profile_b is not None else args.reward_profile
 
         # Prevent collisions by always adding timestamp and job suffix
         # Use the same timestamp as the pair folder for consistency
@@ -187,15 +192,17 @@ def main() -> None:
         args_a = common_args + [
             "--training-profile", args.profile_a,
             "--control-mode", control_mode_a,
+            "--reward-profile", reward_profile_a,
             "--seed", str(args.seed),
-            "--experiment-name", f"{ts}_{args.profile_a}_{control_mode_a}_{args.total_timesteps}_a"
+            "--experiment-name", f"{ts}_{args.profile_a}_{control_mode_a}_{reward_profile_a}_{args.total_timesteps}_a"
         ]
         seed_b = args.seed_b if args.seed_b is not None else args.seed
         args_b = common_args + [
             "--training-profile", args.profile_b,
             "--control-mode", control_mode_b,
+            "--reward-profile", reward_profile_b,
             "--seed", str(seed_b),
-            "--experiment-name", f"{ts}_{args.profile_b}_{control_mode_b}_{args.total_timesteps}_b"
+            "--experiment-name", f"{ts}_{args.profile_b}_{control_mode_b}_{reward_profile_b}_{args.total_timesteps}_b"
         ]
 
         mode_results = {}

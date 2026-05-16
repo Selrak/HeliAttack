@@ -880,6 +880,38 @@ Fix the remaining HA2 RL reporting/instrumentation bugs found by source inspecti
 ### Suggested Next Step
 - Lancer de nouvelles expérimentations RL ou analyser les résultats existants.
 
+## 2026-05-16 01:00 Europe/Paris - Defensive Curriculum Profiles
+
+### Task Attempted
+Implement and test the first defensive curriculum reward profile (`defense_v1`) to penalize player damage, death, edge camping, and input inefficiency.
+
+### Files Changed or Created
+- Updated `ha2_env.py` to add `defense_v1` to `REWARD_PROFILES` and implement its reward breakdown in `step()`.
+- Updated `scripts/train_parkour.py`, `scripts/evaluate_model.py`, `scripts/watch_model.py`, `scripts/run_experiment.py`, and `scripts/run_experiment_pair.py` to support the `--reward-profile` CLI argument.
+- Created `tests/test_reward_profiles.py` to explicitly verify `combat_default` and `defense_v1` behaviors, including penalties for camping at the edge and pressing into boundaries.
+- Updated `docs/ai/CURRENT_STATE.md` and `docs/ai/CODEX_SESSION_LOG.md`.
+
+### Repository Facts Discovered
+- Passing extra context like `reward_profile` across the entire hierarchy from `run_experiment_pair.py` down to `train_parkour.py` and into the config required ensuring every step forwarded the argument.
+
+### Commands Run
+- `python -m pytest` (Passed all tests, including new reward profile tests)
+- `python -m scripts.run_experiment_pair --mode parallel --profile-a combat_bullets_v1 --profile-b combat_bullets_v1 --control-mode-a movement_no_boost_scripted_attack_direct --control-mode-b movement_scripted_attack_direct --reward-profile-a defense_v1 --reward-profile-b defense_v1 --label-a M0_defense --label-b M1_defense --total-timesteps 1000 --n-envs 1 --vec-env dummy --wandb off --train-eval off --eval-episodes 1 --save-replays --timing-profile on --threads-per-job 2 --net-arch 128,128 --stagger-seconds 0 --seed 0 --seed-b 0`
+
+### Validation Result
+- Passed: `defense_v1` properly penalizes edge camping and blocked inputs.
+- Passed: Both `combat_default` and `defense_v1` behave deterministically in tests.
+- Passed: The `--reward-profile` argument correctly propagates from the CLI to `config.json` and the environment logic.
+
+### Architectural Discrepancies
+- None.
+
+### Remaining Risks
+- The edge camping penalty counts strictly on the outermost boundary of the map (`X < 1.0` or `X > width - 1`). If the agent finds a way to camp at `X = 2.0`, the penalty won't trigger.
+
+### Suggested Next Step
+- Run a 100k comparison with the new defensive rewards.
+
 ## 2026-05-16 00:00 Europe/Paris - Movement Curriculum (M0/M1) Implementation
 
 ### Task Attempted

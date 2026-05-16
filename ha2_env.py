@@ -150,6 +150,8 @@ COMBAT_BULLETS_V1_OBS_SIZE = len(COMBAT_BULLETS_V1_OBS_FIELDS)
 
 
 
+REWARD_PROFILES = {"combat_default", "defense_v1"}
+
 class HeliAttack2Env(gym.Env):
     """
     Custom Gymnasium environment for Heli Attack 2.
@@ -169,6 +171,7 @@ class HeliAttack2Env(gym.Env):
         spawn_default_heli: bool = True,
         respawn_helis: bool = True,
         training_profile: str = "legacy",
+        reward_profile: str = "combat_default",
         max_episode_steps: int | None = None,
     ):
         super().__init__()
@@ -177,6 +180,12 @@ class HeliAttack2Env(gym.Env):
                 f"Unknown training_profile {training_profile!r}; "
                 f"expected one of {sorted(TRAINING_PROFILES)}"
             )
+        if reward_profile not in REWARD_PROFILES:
+            raise ValueError(
+                f"Unknown reward_profile {reward_profile!r}; "
+                f"expected one of {sorted(REWARD_PROFILES)}"
+            )
+        self.reward_profile = reward_profile
         if max_episode_steps is not None and int(max_episode_steps) <= 0:
             raise ValueError("max_episode_steps must be positive or None")
         self.render_mode = render_mode
@@ -1661,13 +1670,42 @@ class HeliAttack2Env(gym.Env):
                 truncated = True
                 termination_reason = "time_limit"
 
-            reward_breakdown = {
-                "living": 0.01,
-                "enemy_damage": 0.05 * float(score_delta),
-                "kill": 5.0 * float(killed_helis),
-                "player_damage": -0.10 * float(player_damage),
-                "terminal": -25.0 if terminated else 0.0,
-            }
+            if self.reward_profile == "combat_default":
+                reward_breakdown = {
+                    "living": 0.01,
+                    "enemy_damage": 0.05 * float(score_delta),
+                    "kill": 5.0 * float(killed_helis),
+                    "player_damage": -0.10 * float(player_damage),
+                    "terminal": -25.0 if terminated else 0.0,
+                }
+            elif self.reward_profile == "defense_v1":
+                at_left = self._x < 1.0
+                at_right = self._x > (self.map_pixel_width - self.playerwidth - 1.0)
+                camping_penalty = 0.0
+                if at_left and self.current_consecutive_frames_at_left_edge > 30:
+                    camping_penalty -= 0.01
+                elif at_right and self.current_consecutive_frames_at_right_edge > 30:
+                    camping_penalty -= 0.01
+                    
+                input_inefficiency = 0.0
+                dx = self._x - previous_x
+                if move_action == 0 and dx > -0.0001:
+                    input_inefficiency -= 0.01
+                elif move_action == 2 and dx < 0.0001:
+                    input_inefficiency -= 0.01
+                    
+                reward_breakdown = {
+                    "living": 0.0,
+                    "enemy_damage": 0.03 * float(score_delta),
+                    "kill": 3.0 * float(killed_helis),
+                    "player_damage": -1.0 * float(player_damage),
+                    "terminal": -50.0 if terminated else 0.0,
+                    "camping": camping_penalty,
+                    "inefficiency": input_inefficiency,
+                }
+            else:
+                raise ValueError(f"Unknown reward_profile: {self.reward_profile}")
+                
             reward = float(sum(reward_breakdown.values()))
 
         self.tick += 1
