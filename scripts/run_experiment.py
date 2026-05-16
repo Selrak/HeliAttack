@@ -7,6 +7,7 @@ import zipfile
 
 from scripts import train_parkour
 from scripts import evaluate_model
+from ha2_env import CONTROL_MODE_FULL, CONTROL_MODES
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Orchestrate HA2 PPO training and evaluation.")
@@ -16,6 +17,7 @@ def main() -> None:
     parser.add_argument("--vec-env", choices=["dummy", "subproc"], default="dummy")
     parser.add_argument("--train-eval", choices=["on", "off"], default="on")
     parser.add_argument("--eval-freq", type=int, default=None)
+    parser.add_argument("--eval-freq-timesteps", type=int, default=None, help="Evaluation frequency in total timesteps.")
     parser.add_argument("--train-eval-episodes", type=int, default=5)
     parser.add_argument("--eval-vec-env", choices=["dummy", "subproc", "same"], default="dummy")
     parser.add_argument("--device", default="auto")
@@ -24,7 +26,7 @@ def main() -> None:
     parser.add_argument("--experiment-name", type=str, default=None)
     parser.add_argument("--save-replays", action="store_true")
     parser.add_argument("--training-profile", choices=["legacy", "combat_v1", "combat_bullets_v1"], default="combat_v1")
-    parser.add_argument("--control-mode", choices=["full", "movement_scripted_attack_direct", "movement_no_boost_scripted_attack_direct"], default="full")
+    parser.add_argument("--control-mode", choices=sorted(CONTROL_MODES), default=CONTROL_MODE_FULL)
     parser.add_argument("--max-episode-steps", type=int, default=1800)
     parser.add_argument("--watch", action="store_true")
     parser.add_argument("--net-arch", type=str, default=None, help="Comma-separated list of hidden layer sizes (e.g. '128,128')")
@@ -57,6 +59,8 @@ def main() -> None:
         train_args.extend(["--torch-num-threads", str(args.torch_num_threads)])
     if args.eval_freq is not None:
         train_args.extend(["--eval-freq", str(args.eval_freq)])
+    if args.eval_freq_timesteps is not None:
+        train_args.extend(["--eval-freq-timesteps", str(args.eval_freq_timesteps)])
     if args.experiment_name is not None:
         train_args.extend(["--experiment-name", args.experiment_name])
 
@@ -143,8 +147,10 @@ def main() -> None:
         movement_metrics = [
             ("frames_grounded", "Frames Grounded"),
             ("frames_airborne", "Frames Airborne"),
-            ("frames_moving_left", "Frames Moving Left"),
-            ("frames_moving_right", "Frames Moving Right"),
+            ("frames_pressing_left", "Frames Pressing Left"),
+            ("frames_pressing_right", "Frames Pressing Right"),
+            ("frames_actual_moving_left", "Frames Actual Moving Left"),
+            ("frames_actual_moving_right", "Frames Actual Moving Right"),
             ("frames_boost_pressed", "Frames Boost Pressed"),
             ("frames_boost_ready", "Frames Boost Ready"),
             ("boost_activations", "Boost Activations"),
@@ -171,11 +177,22 @@ def main() -> None:
         defensive_rates = [
             ("visible_enemy_bullet_hit_rate_against_player", "Visible Bullet Hit Rate"),
             ("damage_free_episode_rate", "Damage-Free Episodes"),
+            ("input_motion_mismatch_rate", "Input-Motion Mismatch Rate"),
+            ("left_edge_camping_rate", "Left Edge Camping Rate"),
+            ("right_edge_camping_rate", "Right Edge Camping Rate"),
         ]
         for key, label in defensive_rates:
             best_val = best_report["rates"].get(key) if best_report else None
             latest_val = latest_report["rates"].get(key) if latest_report else None
             summary_content += f"| {label} | {fmt_percent(best_val)} | {fmt_percent(latest_val)} |\n"
+
+        summary_content += f"\n### Replay Inspection\n\n"
+        summary_content += f"Watch best model:\n```text\npython -m scripts.watch_model --experiment {layout.path} --model-choice best\n```\n"
+        summary_content += f"Watch latest model:\n```text\npython -m scripts.watch_model --experiment {layout.path} --model-choice latest\n```\n"
+        
+        best_replay = layout.replays_dir / "best_eval_ep0.jsonl"
+        if best_replay.exists():
+            summary_content += f"Play best replay:\n```text\npython -m scripts.play_replay {best_replay}\n```\n"
 
         with open(summary_path, "w") as f:
             f.write(summary_content)

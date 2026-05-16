@@ -6,7 +6,17 @@ from pathlib import Path
 
 import numpy as np
 
-from ha2_env import HeliAttack2Env
+from ha2_env import (
+    CONTROL_MODE_FULL,
+    CONTROL_MODES,
+    FULL_SIM_ACTION_NVEC,
+    action_space_nvec,
+    get_full_action,
+    get_policy_action,
+    make_controlled_env,
+    policy_action_space_nvec,
+    sim_action_space_nvec,
+)
 from ha2_replay import JsonlReplayWriter
 from scripts.experiment_utils import (
     ExperimentLayout,
@@ -52,6 +62,30 @@ def ratio_or_none(numerator: float, denominator: float) -> float | None:
     return float(numerator) / float(denominator)
 
 
+def marginal_action_distributions(
+    stats: list[dict],
+    *,
+    frequency_key: str,
+    action_names: list[str],
+) -> dict:
+    total_actions = sum(row["length"] for row in stats)
+    distributions: dict[str, dict[str, float]] = {}
+    if total_actions <= 0:
+        return distributions
+    for action_idx, name in enumerate(action_names):
+        distributions[name] = {}
+        for row in stats:
+            for action_tuple_str, count in row.get(frequency_key, row.get("action_frequencies", {})).items():
+                parts = action_tuple_str.split("|")
+                if action_idx >= len(parts):
+                    continue
+                val = parts[action_idx]
+                distributions[name][val] = distributions[name].get(val, 0) + count
+        for val in distributions[name]:
+            distributions[name][val] = float(distributions[name][val]) / total_actions
+    return distributions
+
+
 def build_evaluation_report(
     *,
     layout: ExperimentLayout | None,
@@ -67,17 +101,24 @@ def build_evaluation_report(
     termination_reason_counts = Counter(row["termination_reason"] for row in stats)
 
     total_actions = sum(row["length"] for row in stats)
-    marginal_actions = {}
-    if total_actions > 0:
-        action_names = ["move", "jump", "duck", "boost", "aim", "fire"]
-        for action_idx, name in enumerate(action_names):
-            marginal_actions[name] = {}
-            for row in stats:
-                for action_tuple_str, count in row["action_frequencies"].items():
-                    val = action_tuple_str.split("|")[action_idx]
-                    marginal_actions[name][val] = marginal_actions[name].get(val, 0) + count
-            for val in marginal_actions[name]:
-                marginal_actions[name][val] = float(marginal_actions[name][val]) / total_actions
+    full_action_names = ["move", "jump", "duck", "boost", "aim", "fire"]
+    control_mode = experiment_config.get("control_mode", CONTROL_MODE_FULL) if experiment_config else CONTROL_MODE_FULL
+    if control_mode == "movement_no_boost_scripted_attack_direct":
+        policy_action_names = ["move", "jump", "duck"]
+    elif control_mode == "movement_scripted_attack_direct":
+        policy_action_names = ["move", "jump", "duck", "boost"]
+    else:
+        policy_action_names = full_action_names
+    full_action_distributions = marginal_action_distributions(
+        stats,
+        frequency_key="full_action_frequencies",
+        action_names=full_action_names,
+    )
+    policy_action_distributions = marginal_action_distributions(
+        stats,
+        frequency_key="policy_action_frequencies",
+        action_names=policy_action_names,
+    )
 
     bullets_spawned_sum = sum(row["player_bullets_spawned"] for row in stats)
     visible_seen_sum = sum(row["visible_enemy_bullets_seen_unique"] for row in stats)
@@ -92,7 +133,9 @@ def build_evaluation_report(
         "model": str(model_path),
         "model_choice": effective_model_choice,
         "training_profile": training_profile,
-        "control_mode": experiment_config.get("control_mode", "full"),
+        "control_mode": control_mode,
+        "policy_action_space_nvec": experiment_config.get("policy_action_space_nvec"),
+        "sim_action_space_nvec": experiment_config.get("sim_action_space_nvec", FULL_SIM_ACTION_NVEC),
         "max_episode_steps": max_episode_steps,
         "episodes": episodes,
         "net_arch": experiment_config.get("net_arch"),
@@ -118,9 +161,22 @@ def build_evaluation_report(
             "frames_jump_pressed": aggregate_metric(stats, "frames_jump_pressed"),
             "jump_presses_grounded": aggregate_metric(stats, "jump_presses_grounded"),
             "jump_presses_airborne": aggregate_metric(stats, "jump_presses_airborne"),
-            "frames_moving_left": aggregate_metric(stats, "frames_moving_left"),
-            "frames_moving_right": aggregate_metric(stats, "frames_moving_right"),
-            "frames_not_moving_horizontally": aggregate_metric(stats, "frames_not_moving_horizontally"),
+            "frames_pressing_left": aggregate_metric(stats, "frames_pressing_left"),
+            "frames_pressing_right": aggregate_metric(stats, "frames_pressing_right"),
+            "frames_pressing_neutral": aggregate_metric(stats, "frames_pressing_neutral"),
+            "frames_actual_moving_left": aggregate_metric(stats, "frames_actual_moving_left"),
+            "frames_actual_moving_right": aggregate_metric(stats, "frames_actual_moving_right"),
+            "frames_actual_not_moving_horizontally": aggregate_metric(stats, "frames_actual_not_moving_horizontally"),
+            "sum_abs_player_dx": aggregate_metric(stats, "sum_abs_player_dx"),
+            "player_x_range": aggregate_metric(stats, "player_x_range"),
+            "frames_at_left_edge": aggregate_metric(stats, "frames_at_left_edge"),
+            "frames_at_right_edge": aggregate_metric(stats, "frames_at_right_edge"),
+            "max_consecutive_frames_at_left_edge": aggregate_metric(stats, "max_consecutive_frames_at_left_edge"),
+            "max_consecutive_frames_at_right_edge": aggregate_metric(stats, "max_consecutive_frames_at_right_edge"),
+            "frames_pressing_left_at_left_edge": aggregate_metric(stats, "frames_pressing_left_at_left_edge"),
+            "frames_pressing_right_at_right_edge": aggregate_metric(stats, "frames_pressing_right_at_right_edge"),
+            "min_player_x": aggregate_metric(stats, "min_player_x"),
+            "max_player_x": aggregate_metric(stats, "max_player_x"),
             "final_score": aggregate_metric(stats, "final_score"),
             "max_score": aggregate_metric(stats, "max_score"),
             "visible_enemy_bullets_seen_unique": aggregate_metric(stats, "visible_enemy_bullets_seen_unique"),
@@ -148,12 +204,29 @@ def build_evaluation_report(
             "death_rate": sum(row["deaths"] for row in stats) / float(len(stats)) if stats else 0.0,
             "fall_rate": sum(row["falls"] for row in stats) / float(len(stats)) if stats else 0.0,
             "timeout_rate": sum(1 for row in stats if row["termination_reason"] == "time_limit") / float(len(stats)) if stats else 0.0,
+            "input_motion_mismatch_rate": ratio_or_none(
+                sum(row["frames_pressing_left"] + row["frames_pressing_right"] for row in stats)
+                - sum(row["frames_actual_moving_left"] + row["frames_actual_moving_right"] for row in stats),
+                total_actions
+            ),
+            "left_edge_camping_rate": ratio_or_none(sum(row["frames_at_left_edge"] for row in stats), total_actions),
+            "right_edge_camping_rate": ratio_or_none(sum(row["frames_at_right_edge"] for row in stats), total_actions),
+            "left_edge_blocked_press_rate": ratio_or_none(
+                sum(row["frames_pressing_left_at_left_edge"] for row in stats),
+                sum(row["frames_at_left_edge"] for row in stats)
+            ),
+            "right_edge_blocked_press_rate": ratio_or_none(
+                sum(row["frames_pressing_right_at_right_edge"] for row in stats),
+                sum(row["frames_at_right_edge"] for row in stats)
+            ),
             "visible_enemy_bullet_hit_rate_against_player": ratio_or_none(visible_hits_sum, visible_seen_sum),
             "damage_free_episode_rate": sum(1 for row in stats if row["damage_free_episode"]) / float(len(stats)) if stats else 0.0,
             "visible_enemy_bullets_over_top10_frame_rate": ratio_or_none(over_top10_frames_sum, total_actions),
         },
         "termination_reason_counts": dict(termination_reason_counts),
-        "marginal_action_distributions": marginal_actions,
+        "policy_action_distributions": policy_action_distributions,
+        "full_action_distributions": full_action_distributions,
+        "marginal_action_distributions": full_action_distributions,
         "episodes_detail": stats,
         "replay_paths": replay_paths,
     }
@@ -173,7 +246,7 @@ def main(args_list: list[str] | None = None) -> None:
     parser.add_argument("--report-name", type=str, default=None)
     parser.add_argument("--replay-prefix", type=str, default=None)
     parser.add_argument("--training-profile", choices=["legacy", "combat_v1", "combat_bullets_v1"], default="combat_v1")
-    parser.add_argument("--control-mode", choices=["full", "movement_scripted_attack_direct", "movement_no_boost_scripted_attack_direct"], default="full")
+    parser.add_argument("--control-mode", choices=sorted(CONTROL_MODES), default=CONTROL_MODE_FULL)
     parser.add_argument("--max-episode-steps", type=int, default=1800)
     args = parser.parse_args(args_list)
 
@@ -218,6 +291,8 @@ def main(args_list: list[str] | None = None) -> None:
     stats = []
     replay_paths: list[str] = []
     planned_replay_paths: list[Path] = []
+    runtime_policy_action_space_nvec = None
+    runtime_sim_action_space_nvec = None
     if args.save_replays:
         if args.replay_dir is not None:
             replay_dir = Path(args.replay_dir)
@@ -239,19 +314,17 @@ def main(args_list: list[str] | None = None) -> None:
             planned_replay_paths.append(replay_path)
 
     for episode in range(args.episodes):
-        env = HeliAttack2Env(
+        env = make_controlled_env(
             render_mode=None,
+            control_mode=args.control_mode,
             training_profile=args.training_profile,
             max_episode_steps=args.max_episode_steps,
         )
-        if args.control_mode == "movement_scripted_attack_direct":
-            from ha2_env import MovementScriptedAttackDirectWrapper
-            env = MovementScriptedAttackDirectWrapper(env)
-        elif args.control_mode == "movement_no_boost_scripted_attack_direct":
-            from ha2_env import MovementNoBoostScriptedAttackDirectWrapper
-            env = MovementNoBoostScriptedAttackDirectWrapper(env)
-            
+        if runtime_policy_action_space_nvec is None:
+            runtime_policy_action_space_nvec = policy_action_space_nvec(env)
+            runtime_sim_action_space_nvec = sim_action_space_nvec(env)
         obs, _info = env.reset(seed=args.seed + episode)
+        base_env = env.unwrapped
         writer = None
         if args.save_replays:
             replay_path = planned_replay_paths[episode]
@@ -265,25 +338,42 @@ def main(args_list: list[str] | None = None) -> None:
 
         total_reward = 0.0
         length = 0
-        max_x = env._x
+        max_x = base_env._x
         actions = Counter()
         visible_enemy_bullet_counts: list[int] = []
-        max_score = int(env.score)
-        final_score = int(env.score)
+        max_score = int(base_env.score)
+        final_score = int(base_env.score)
+        policy_actions = Counter()
+        full_actions = Counter()
         terminated = truncated = False
         try:
             while not (terminated or truncated):
                 action, _state = model.predict(obs, deterministic=True)
                 action_list = [int(v) for v in action]
                 obs, reward, terminated, truncated, info = env.step(action_list)
+                policy_action = get_policy_action(env, action_list)
+                full_action = get_full_action(env, action_list)
                 if writer is not None:
-                    writer.append_step(env, action_list, obs, reward, terminated, truncated, info)
+                    writer.append_step(
+                        env,
+                        full_action,
+                        obs,
+                        reward,
+                        terminated,
+                        truncated,
+                        info,
+                        policy_action=policy_action,
+                        full_action=full_action,
+                        control_mode=args.control_mode,
+                    )
                 total_reward += float(reward)
                 length += 1
-                max_x = max(max_x, env._x)
-                final_score = int(info.get("combat", {}).get("score", env.score))
+                max_x = max(max_x, base_env._x)
+                final_score = int(info.get("combat", {}).get("score", base_env.score))
                 max_score = max(max_score, final_score)
-                actions[tuple(action_list)] += 1
+                actions[tuple(full_action)] += 1
+                policy_actions[tuple(policy_action)] += 1
+                full_actions[tuple(full_action)] += 1
                 visible_enemy_bullet_counts.append(int(info.get("visible_enemy_bullets_current", 0)))
         finally:
             if writer is not None:
@@ -325,9 +415,19 @@ def main(args_list: list[str] | None = None) -> None:
                 "frames_jump_pressed": movement.get("frames_jump_pressed", info.get("frames_jump_pressed", 0)),
                 "jump_presses_grounded": movement.get("jump_presses_grounded", info.get("jump_presses_grounded", 0)),
                 "jump_presses_airborne": movement.get("jump_presses_airborne", info.get("jump_presses_airborne", 0)),
-                "frames_moving_left": movement.get("frames_moving_left", info.get("frames_moving_left", 0)),
-                "frames_moving_right": movement.get("frames_moving_right", info.get("frames_moving_right", 0)),
-                "frames_not_moving_horizontally": movement.get("frames_not_moving_horizontally", info.get("frames_not_moving_horizontally", 0)),
+                "frames_pressing_left": movement.get("frames_pressing_left", 0),
+                "frames_pressing_right": movement.get("frames_pressing_right", 0),
+                "frames_pressing_neutral": movement.get("frames_pressing_neutral", 0),
+                "frames_actual_moving_left": movement.get("frames_actual_moving_left", 0),
+                "frames_actual_moving_right": movement.get("frames_actual_moving_right", 0),
+                "frames_actual_not_moving_horizontally": movement.get("frames_actual_not_moving_horizontally", 0),
+                "sum_abs_player_dx": movement.get("sum_abs_player_dx", 0.0),
+                "frames_at_left_edge": movement.get("frames_at_left_edge", 0),
+                "frames_at_right_edge": movement.get("frames_at_right_edge", 0),
+                "max_consecutive_frames_at_left_edge": movement.get("max_consecutive_frames_at_left_edge", 0),
+                "max_consecutive_frames_at_right_edge": movement.get("max_consecutive_frames_at_right_edge", 0),
+                "frames_pressing_left_at_left_edge": movement.get("frames_pressing_left_at_left_edge", 0),
+                "frames_pressing_right_at_right_edge": movement.get("frames_pressing_right_at_right_edge", 0),
                 "min_player_x": movement.get("min_player_x", info.get("min_player_x", 0.0)),
                 "max_player_x": movement.get("max_player_x", info.get("max_player_x", 0.0)),
                 "visible_enemy_bullets_current": defensive.get("visible_enemy_bullets_current", 0),
@@ -358,9 +458,16 @@ def main(args_list: list[str] | None = None) -> None:
                 "frames_since_last_damage": defensive.get("frames_since_last_damage", length),
                 "longest_damage_free_streak": defensive.get("longest_damage_free_streak", length),
                 "damage_free_episode": defensive.get("damage_free_episode", True),
+                "policy_action_frequencies": {"|".join(map(str, k)): v for k, v in policy_actions.items()},
+                "full_action_frequencies": {"|".join(map(str, k)): v for k, v in full_actions.items()},
                 "action_frequencies": {"|".join(map(str, k)): v for k, v in actions.items()},
             }
         )
+
+    config = dict(config)
+    config.setdefault("control_mode", args.control_mode)
+    config.setdefault("policy_action_space_nvec", runtime_policy_action_space_nvec)
+    config.setdefault("sim_action_space_nvec", runtime_sim_action_space_nvec or FULL_SIM_ACTION_NVEC)
 
     report = build_evaluation_report(
         layout=layout,

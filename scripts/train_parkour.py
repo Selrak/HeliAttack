@@ -13,7 +13,12 @@ try:
 except ImportError:
     pass
 
-from ha2_env import HeliAttack2Env
+from ha2_env import (
+    CONTROL_MODE_FULL,
+    CONTROL_MODES,
+    FULL_SIM_ACTION_NVEC,
+    make_controlled_env,
+)
 from scripts.experiment_utils import (
     create_experiment_layout,
     git_info_text,
@@ -46,18 +51,12 @@ class EnvFactory:
     def __call__(self):
         from stable_baselines3.common.monitor import Monitor
 
-        env = HeliAttack2Env(
+        env = make_controlled_env(
             render_mode=None,
+            control_mode=self.control_mode,
             training_profile=self.training_profile,
             max_episode_steps=self.max_episode_steps,
         )
-        if self.control_mode == "movement_scripted_attack_direct":
-            from ha2_env import MovementScriptedAttackDirectWrapper
-            env = MovementScriptedAttackDirectWrapper(env)
-        elif self.control_mode == "movement_no_boost_scripted_attack_direct":
-            from ha2_env import MovementNoBoostScriptedAttackDirectWrapper
-            env = MovementNoBoostScriptedAttackDirectWrapper(env)
-            
         env.reset(seed=self.seed + self.rank)
         return Monitor(env)
 
@@ -103,14 +102,15 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
     parser.add_argument("--n-envs", type=int, default=1)
     parser.add_argument("--vec-env", choices=["dummy", "subproc"], default="dummy")
     parser.add_argument("--train-eval", choices=["on", "off"], default="on")
-    parser.add_argument("--eval-freq", type=int, default=None)
+    parser.add_argument("--eval-freq", type=int, default=None, help="Evaluation frequency in vector steps (once per n-envs).")
+    parser.add_argument("--eval-freq-timesteps", type=int, default=None, help="Evaluation frequency in total timesteps (will be divided by n-envs).")
     parser.add_argument("--train-eval-episodes", type=int, default=5)
     parser.add_argument("--eval-vec-env", choices=["dummy", "subproc", "same"], default="dummy")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--tensorboard-log", type=Path, default=None)
     parser.add_argument("--wandb", choices=["off", "on"], default="off")
     parser.add_argument("--training-profile", choices=["legacy", "combat_v1", "combat_bullets_v1"], default="combat_v1")
-    parser.add_argument("--control-mode", choices=["full", "movement_scripted_attack_direct", "movement_no_boost_scripted_attack_direct"], default="full")
+    parser.add_argument("--control-mode", choices=sorted(CONTROL_MODES), default=CONTROL_MODE_FULL)
     parser.add_argument("--max-episode-steps", type=int, default=1800)
     parser.add_argument("--experiments-root", type=Path, default=Path("experiments"))
     parser.add_argument("--experiment-dir", type=Path, default=None)
@@ -122,7 +122,15 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
     parser.add_argument("--timing-profile", choices=["on", "off"], default="off")
     parser.add_argument("--torch-num-threads", type=int, default=None)
     args = parser.parse_args(args_list)
-    if args.eval_freq is not None and args.eval_freq <= 0:
+
+    # Compute effective eval_freq
+    effective_eval_freq = args.eval_freq
+    if args.eval_freq_timesteps is not None:
+        effective_eval_freq = max(1, args.eval_freq_timesteps // args.n_envs)
+    if effective_eval_freq is None:
+        effective_eval_freq = max(1000, args.n_envs) # Default
+
+    if effective_eval_freq <= 0:
         raise SystemExit("--eval-freq must be positive")
     if args.train_eval_episodes <= 0:
         raise SystemExit("--train-eval-episodes must be positive")
@@ -204,6 +212,9 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         dummy_vec_env_cls=DummyVecEnv,
         subproc_vec_env_cls=SubprocVecEnv,
     )
+    config["policy_action_space_nvec"] = [int(v) for v in env.action_space.nvec.tolist()]
+    config["sim_action_space_nvec"] = FULL_SIM_ACTION_NVEC.copy()
+    write_json_file(layout.config_path, config, allow_overwrite=True)
 
     callbacks = [
         CheckpointCallback(save_freq=5_000, save_path=str(layout.checkpoints_dir), name_prefix="ha2"),
@@ -216,6 +227,7 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
             n_envs=1,
             seed=args.seed + 10_000,
             training_profile=args.training_profile,
+            control_mode=args.control_mode,
             max_episode_steps=args.max_episode_steps,
             monitor_cls=Monitor,
             dummy_vec_env_cls=DummyVecEnv,
@@ -226,7 +238,7 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
                 eval_env,
                 best_model_save_path=str(layout.models_dir),
                 log_path=str(layout.reports_dir),
-                eval_freq=args.eval_freq if args.eval_freq is not None else max(1_000, args.n_envs),
+                eval_freq=effective_eval_freq,
                 n_eval_episodes=args.train_eval_episodes,
                 deterministic=True,
             )
@@ -327,6 +339,9 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         "",
         f"- experiment: `{layout.path}`",
         f"- training_profile: `{args.training_profile}`",
+        f"- control_mode: `{args.control_mode}`",
+        f"- policy_action_space_nvec: `{config.get('policy_action_space_nvec')}`",
+        f"- sim_action_space_nvec: `{config.get('sim_action_space_nvec')}`",
         f"- total_timesteps: `{args.total_timesteps}`",
         f"- seed: `{args.seed}`",
         f"- n_envs: `{args.n_envs}`",
@@ -334,7 +349,8 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         f"- train_eval: `{args.train_eval}`",
         f"- eval_vec_env: `{args.eval_vec_env}`",
         f"- effective_eval_vec_env: `{effective_eval_vec_env(args.vec_env, args.eval_vec_env)}`",
-        f"- eval_freq: `{args.eval_freq if args.eval_freq is not None else max(1_000, args.n_envs)}`",
+        f"- eval_freq: `{effective_eval_freq}`",
+        f"- eval_freq_timesteps: `{args.eval_freq_timesteps}`",
         f"- train_eval_episodes: `{args.train_eval_episodes}`",
         f"- device: `{args.device}`",
         f"- tensorboard_log: `{tensorboard_log}`",

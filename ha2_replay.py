@@ -6,7 +6,16 @@ from typing import Any
 
 import numpy as np
 
-from ha2_env import ENV_NAME, ENV_VERSION, HeliAttack2Env
+from ha2_env import (
+    CONTROL_MODE_FULL,
+    ENV_NAME,
+    ENV_VERSION,
+    HeliAttack2Env,
+    get_full_action,
+    get_policy_action,
+    policy_action_space_nvec,
+    sim_action_space_nvec,
+)
 
 
 SCHEMA_VERSION = 1
@@ -29,17 +38,21 @@ class JsonlReplayWriter:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.file = self.path.open("w", encoding="utf-8")
+        base_env = env.unwrapped
         header = {
             "type": "header",
             "schema_version": SCHEMA_VERSION,
             "env_name": ENV_NAME,
             "env_version": ENV_VERSION,
-            "training_profile": env.training_profile,
-            "max_episode_steps": env.max_episode_steps,
+            "training_profile": base_env.training_profile,
+            "max_episode_steps": base_env.max_episode_steps,
+            "control_mode": getattr(env, "control_mode", CONTROL_MODE_FULL),
+            "policy_action_space_nvec": policy_action_space_nvec(env),
+            "sim_action_space_nvec": sim_action_space_nvec(env),
             "seed": int(seed),
             "initial_observation": to_jsonable(initial_obs),
-            "initial_state": env.get_state(),
-            "initial_state_hash": env.state_hash(),
+            "initial_state": base_env.get_state(),
+            "initial_state_hash": base_env.state_hash(),
             "action_space": {
                 "type": env.action_space.__class__.__name__,
                 "nvec": to_jsonable(env.action_space.nvec),
@@ -51,18 +64,38 @@ class JsonlReplayWriter:
         self.file.write(json.dumps(to_jsonable(record), separators=(",", ":")) + "\n")
         self.file.flush()
 
-    def append_step(self, env: HeliAttack2Env, action, obs, reward, terminated, truncated, info):
+    def append_step(
+        self,
+        env: HeliAttack2Env,
+        action,
+        obs,
+        reward,
+        terminated,
+        truncated,
+        info,
+        *,
+        policy_action=None,
+        full_action=None,
+        control_mode: str | None = None,
+    ):
+        policy_action = get_policy_action(env, action if policy_action is None else policy_action)
+        full_action = get_full_action(env, action if full_action is None else full_action)
+        control_mode = control_mode or getattr(env, "control_mode", CONTROL_MODE_FULL)
+        base_env = env.unwrapped
         self.write(
             {
                 "type": "step",
-                "tick": env.tick,
-                "action": [int(v) for v in action],
+                "tick": base_env.tick,
+                "action": [int(v) for v in full_action],
                 "reward": float(reward),
                 "terminated": bool(terminated),
                 "truncated": bool(truncated),
                 "observation": to_jsonable(obs),
-                "state_hash": env.state_hash(),
+                "state_hash": base_env.state_hash(),
                 "debug": {
+                    "control_mode": control_mode,
+                    "policy_action": policy_action,
+                    "full_action": full_action,
                     "camera": info.get("camera"),
                     "contact": info.get("contact"),
                     "grounded": info.get("grounded"),

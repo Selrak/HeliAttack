@@ -939,4 +939,94 @@ Fix the per-job `duration_seconds` reporting in `scripts/run_experiment_pair.py`
 - None.
 
 ### Suggested Next Step
-- Analyze the finalized reports from the 500k parallel runs.
+- Review the finalized reports from the 500k parallel runs.
+
+## 2026-05-16 23:55 Europe/Paris - Fix Horizontal Movement and Clarify Eval Frequency
+
+### Task Attempted
+Fix horizontal-movement diagnostics (min/max X were stuck at 25.0), add comprehensive edge-camping and movement-mismatch metrics, and clarify training-time evaluation frequency via `--eval-freq-timesteps`.
+
+### Files Changed or Created
+- Updated `ha2_env.py` to correctly update `min_player_x` and `max_player_x` in `step()`, and added 15+ new movement diagnostics (actual vs. requested movement, edge camping, consecutive edge frames).
+- Updated `scripts/train_parkour.py` to support `--eval-freq-timesteps` and division by `n_envs` for accurate SB3 behavior.
+- Updated `scripts/run_experiment.py` and `scripts/run_experiment_pair.py` to support `--eval-freq-timesteps` and include copy-pasteable `watch_model` and `play_replay` commands in Markdown summaries.
+- Updated `scripts/evaluate_model.py` to aggregate the new movement metrics and calculate rates (mismatch, camping, blocked press).
+- Updated `docs/ai/CURRENT_STATE.md` and `docs/ai/CODEX_SESSION_LOG.md`.
+
+### Repository Facts Discovered
+- `min_player_x` and `max_player_x` must be updated *after* physics resolution in `step()` to capture the actual bounds reached by the player.
+- SB3 `EvalCallback`'s `eval_freq` is measured in vector steps, so for 4 parallel envs, a `50000` total timestep interval requires `eval_freq=12500`.
+
+### Commands Run
+- `python -m scripts.run_experiment_pair --mode parallel --profile-a combat_v1 --profile-b combat_bullets_v1 --total-timesteps 1000 --n-envs 1 --vec-env dummy --wandb off --train-eval off --eval-episodes 1 --save-replays --timing-profile on --threads-per-job 2 --net-arch 128,128 --stagger-seconds 0 --seed 0 --seed-b 0`
+
+### Validation Result
+- Passed: `min_player_x` and `max_player_x` are correctly reported (e.g., `-21.6` and `150.0`) instead of the starting constant `25.0`.
+- Passed: `pair_summary.md` and experiment `summary.md` now include direct inspection commands.
+- Passed: `eval_latest.json` now includes `control_mode` and all new movement rates.
+
+### Remaining Risks
+- The `rich` TUI in parallel mode depends on terminal window size; extremely small windows may truncate the log panels.
+
+### Suggested Next Step
+- Finalize the triple-task commit (TUI Rich, test optimization, symlinks) and this diagnostic fix.
+
+
+## 2026-05-16 10:12 Europe/Paris - Fix M0/M1 Curriculum Action Accounting
+
+### Task Attempted
+Fix the movement-curriculum pipeline so M0 truly forbids boost, M1 allows boost, training/eval/watch share one control-mode helper path, and reports/replays distinguish policy actions from full simulator actions.
+
+### Files Changed
+- `ha2_env.py`
+- `ha2_replay.py`
+- `scripts/train_parkour.py`
+- `scripts/evaluate_model.py`
+- `scripts/watch_model.py`
+- `scripts/run_experiment.py`
+- `scripts/run_experiment_pair.py`
+- `tests/test_curriculum.py`
+- `tests/test_benchmark_orchestration.py`
+- `docs/ai/CURRENT_STATE.md`
+- `docs/ai/VALIDATION.md`
+- `docs/ai/CODEX_SESSION_LOG.md`
+
+### Validation
+- Passed: required py_compile command.
+- Passed: `.venv\Scripts\python.exe -m pytest -q` (`79 passed`).
+- Passed: random replay record/verify and M0/M1 eval replay verification.
+- Passed: M0 smoke `experiments/ha2_000082_20260516_0959_combat-bullets-v1_1k`.
+- Passed: M1 smoke `experiments/ha2_000083_20260516_1000_combat-bullets-v1_1k`.
+- Passed: 10k pair `experiments/pair_20260516_100323`.
+
+### Key Results
+- M0 policy action space: `[3, 2, 2]`; simulator action space: `[3, 2, 2, 2, 32, 2]`.
+- M1 policy action space: `[3, 2, 2, 2]`; simulator action space: `[3, 2, 2, 2, 32, 2]`.
+- M0 replay boost check: both latest eval replays contain only full action boost value `0`.
+- M0 boost metrics: `boost_activations=0`, `frames_boost_pressed=0`.
+- M1 latest eval replays contain boost values `0` and `1`.
+
+### 10k Comparison Snapshot
+| Metric | M0 no boost | M1 boost |
+|---|---:|---:|
+| Mean reward | 65.56 | 206.50 |
+| Mean heli kills | 4.50 | 9.50 |
+| Mean player damage | 100.00 | 55.00 |
+| Death rate | 100.00% | 0.00% |
+| Visible bullet hit rate | 20.00% | 5.39% |
+| Mean time to first damage | 144.50 | 180.00 |
+| Mean longest damage-free streak | 221.00 | 618.50 |
+| Mean boost activations | 0.00 | 12.00 |
+
+### Replay Paths
+- M0: `experiments/20260516_100323_combat_bullets_v1_movement_no_boost_scripted_attack_direct_10000_a/replays/latest_eval_ep0.jsonl`
+- M0: `experiments/20260516_100323_combat_bullets_v1_movement_no_boost_scripted_attack_direct_10000_a/replays/latest_eval_ep1.jsonl`
+- M1: `experiments/20260516_100323_combat_bullets_v1_movement_scripted_attack_direct_10000_b/replays/latest_eval_ep0.jsonl`
+- M1: `experiments/20260516_100323_combat_bullets_v1_movement_scripted_attack_direct_10000_b/replays/latest_eval_ep1.jsonl`
+
+### Remaining Risks
+- Several stale Python processes from an older run were present during validation and may affect machine performance until cleaned up.
+- The 10k comparison is a smoke validity check, not a learning conclusion.
+
+### Suggested Next Step
+- Visually inspect the 10k M0/M1 replays, then rerun a clean 100k M0/M1 comparison if behavior looks plausible.

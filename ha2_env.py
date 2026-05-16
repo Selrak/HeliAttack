@@ -66,6 +66,15 @@ HUD_HEALTH_Y = 0
 HUD_HEALTH_BITMAP_X = 4
 HUD_HEALTH_BITMAP_Y = 0
 TRAINING_PROFILES = {"legacy", "combat_v1", "combat_bullets_v1"}
+CONTROL_MODE_FULL = "full"
+CONTROL_MODE_MOVEMENT_SCRIPTED_ATTACK_DIRECT = "movement_scripted_attack_direct"
+CONTROL_MODE_MOVEMENT_NO_BOOST_SCRIPTED_ATTACK_DIRECT = "movement_no_boost_scripted_attack_direct"
+CONTROL_MODES = {
+    CONTROL_MODE_FULL,
+    CONTROL_MODE_MOVEMENT_SCRIPTED_ATTACK_DIRECT,
+    CONTROL_MODE_MOVEMENT_NO_BOOST_SCRIPTED_ATTACK_DIRECT,
+}
+FULL_SIM_ACTION_NVEC = [3, 2, 2, 2, AIM_BINS, 2]
 COMBAT_V1_OBS_FIELDS = (
     "player_x_norm",
     "player_y_norm",
@@ -180,6 +189,9 @@ class HeliAttack2Env(gym.Env):
 
         # ACTION SPACE: [Move(left/idle/right), Jump, Duck, Boost, AimBin, Fire]
         self.action_space = spaces.MultiDiscrete([3, 2, 2, 2, AIM_BINS, 2])
+        self.control_mode = CONTROL_MODE_FULL
+        self.policy_action_space_nvec = FULL_SIM_ACTION_NVEC.copy()
+        self.sim_action_space_nvec = FULL_SIM_ACTION_NVEC.copy()
 
         self.map_width = len(const.FULL_MAP_DATA[0])
         self.map_height = len(const.FULL_MAP_DATA)
@@ -254,15 +266,27 @@ class HeliAttack2Env(gym.Env):
         self.frames_boost_pressed_not_ready = 0
         self.boost_activations = 0
         self.frames_since_last_boost = 0
-        self.frames_between_boosts = []
+        self.frames_between_boosts: list[int] = []
         self.frames_jump_pressed = 0
         self.jump_presses_grounded = 0
         self.jump_presses_airborne = 0
-        self.frames_moving_left = 0
-        self.frames_moving_right = 0
-        self.frames_not_moving_horizontally = 0
-        self.min_player_x = self._x if hasattr(self, "_x") else 0.0
-        self.max_player_x = self._x if hasattr(self, "_x") else 0.0
+        self.frames_pressing_left = 0
+        self.frames_pressing_right = 0
+        self.frames_pressing_neutral = 0
+        self.frames_actual_moving_left = 0
+        self.frames_actual_moving_right = 0
+        self.frames_actual_not_moving_horizontally = 0
+        self.sum_abs_player_dx = 0.0
+        self.min_player_x = self._x if hasattr(self, "_x") else 25.0
+        self.max_player_x = self._x if hasattr(self, "_x") else 25.0
+        self.frames_at_left_edge = 0
+        self.frames_at_right_edge = 0
+        self.max_consecutive_frames_at_left_edge = 0
+        self.max_consecutive_frames_at_right_edge = 0
+        self.current_consecutive_frames_at_left_edge = 0
+        self.current_consecutive_frames_at_right_edge = 0
+        self.frames_pressing_left_at_left_edge = 0
+        self.frames_pressing_right_at_right_edge = 0
         self.gun_rotation = 0.0
         self.aim_rotation = 0.0
         self.bullets: list[dict[str, Any]] = []
@@ -463,15 +487,27 @@ class HeliAttack2Env(gym.Env):
         self.frames_boost_pressed_not_ready = 0
         self.boost_activations = 0
         self.frames_since_last_boost = 0
-        self.frames_between_boosts = []
+        self.frames_between_boosts: list[int] = []
         self.frames_jump_pressed = 0
         self.jump_presses_grounded = 0
         self.jump_presses_airborne = 0
-        self.frames_moving_left = 0
-        self.frames_moving_right = 0
-        self.frames_not_moving_horizontally = 0
-        self.min_player_x = self._x if hasattr(self, "_x") else 0.0
-        self.max_player_x = self._x if hasattr(self, "_x") else 0.0
+        self.frames_pressing_left = 0
+        self.frames_pressing_right = 0
+        self.frames_pressing_neutral = 0
+        self.frames_actual_moving_left = 0
+        self.frames_actual_moving_right = 0
+        self.frames_actual_not_moving_horizontally = 0
+        self.sum_abs_player_dx = 0.0
+        self.min_player_x = self._x if hasattr(self, "_x") else 25.0
+        self.max_player_x = self._x if hasattr(self, "_x") else 25.0
+        self.frames_at_left_edge = 0
+        self.frames_at_right_edge = 0
+        self.max_consecutive_frames_at_left_edge = 0
+        self.max_consecutive_frames_at_right_edge = 0
+        self.current_consecutive_frames_at_left_edge = 0
+        self.current_consecutive_frames_at_right_edge = 0
+        self.frames_pressing_left_at_left_edge = 0
+        self.frames_pressing_right_at_right_edge = 0
         self.gun_rotation = 0.0
         self.aim_rotation = 0.0
         self.bullets = []
@@ -1350,6 +1386,8 @@ class HeliAttack2Env(gym.Env):
         action = self._normalize_action(action)
         move_action, jump_action, duck_action, boost_action, aim_bin, fire_action = action
         before_score = int(self.score)
+        previous_x = self._x
+        
         contact = self._empty_contact()
         gun_event = self._empty_gun_event()
         gun_event["removed_bullet_ids"] = self._update_bullets()
@@ -1365,6 +1403,14 @@ class HeliAttack2Env(gym.Env):
         enemy_event["killed_enemy_ids"].extend(enemy_update_event["killed_enemy_ids"])
         enemy_event["player_damage"] += int(enemy_update_event["player_damage"])
         self.total_player_damage += int(enemy_event["player_damage"])
+
+        # Input diagnostics
+        if move_action == 0:
+            self.frames_pressing_left += 1
+        elif move_action == 2:
+            self.frames_pressing_right += 1
+        else:
+            self.frames_pressing_neutral += 1
 
         is_grounded = bool(self.jump == 0 and self.yspeed == 0)
         is_hyperjump_ready = bool(self.hyperjump >= 150)
@@ -1387,13 +1433,9 @@ class HeliAttack2Env(gym.Env):
                 self.jump_presses_airborne += 1
 
         if move_action == 0:
-            self.frames_moving_left += 1
             self.facing_right = False
         elif move_action == 2:
-            self.frames_moving_right += 1
             self.facing_right = True
-        else:
-            self.frames_not_moving_horizontally += 1
 
         if duck_action == 1:
             self.playerwidth = 2 * self.defplayerwidth / 3
@@ -1629,13 +1671,7 @@ class HeliAttack2Env(gym.Env):
             reward = float(sum(reward_breakdown.values()))
 
         self.tick += 1
-        
-        is_grounded = bool(self.jump == 0 and self.yspeed == 0)
-        if is_grounded:
-            self.frames_grounded += 1
-        else:
-            self.frames_airborne += 1
-
+        self._update_movement_diagnostics(previous_x, move_action)
         self._update_visible_enemy_bullet_diagnostics()
         self.last_action = action
         self.last_reward = float(reward)
@@ -2177,6 +2213,57 @@ class HeliAttack2Env(gym.Env):
         self.last_gun_event = self._empty_gun_event()
         self.last_enemy_event = self._empty_enemy_event()
 
+    def _update_movement_diagnostics(self, previous_x: float, move_action: int) -> None:
+        is_grounded = bool(self.jump == 0 and self.yspeed == 0)
+        if is_grounded:
+            self.frames_grounded += 1
+        else:
+            self.frames_airborne += 1
+
+        self.min_player_x = min(self.min_player_x, self._x)
+        self.max_player_x = max(self.max_player_x, self._x)
+        
+        dx = self._x - previous_x
+        self.sum_abs_player_dx += abs(dx)
+        
+        if dx > 0.0001:
+            self.frames_actual_moving_right += 1
+        elif dx < -0.0001:
+            self.frames_actual_moving_left += 1
+        else:
+            self.frames_actual_not_moving_horizontally += 1
+
+        # Edge camping diagnostics
+        # Left edge is X=0 or slightly offset based on physics limits.
+        # Right edge is map_pixel_width or slightly offset.
+        # We use a 1 pixel tolerance.
+        at_left = self._x < 1.0
+        at_right = self._x > (self.map_pixel_width - self.playerwidth - 1.0)
+        
+        if at_left:
+            self.frames_at_left_edge += 1
+            self.current_consecutive_frames_at_left_edge += 1
+            self.max_consecutive_frames_at_left_edge = max(
+                self.max_consecutive_frames_at_left_edge,
+                self.current_consecutive_frames_at_left_edge
+            )
+            if move_action == 0:
+                self.frames_pressing_left_at_left_edge += 1
+        else:
+            self.current_consecutive_frames_at_left_edge = 0
+
+        if at_right:
+            self.frames_at_right_edge += 1
+            self.current_consecutive_frames_at_right_edge += 1
+            self.max_consecutive_frames_at_right_edge = max(
+                self.max_consecutive_frames_at_right_edge,
+                self.current_consecutive_frames_at_right_edge
+            )
+            if move_action == 2:
+                self.frames_pressing_right_at_right_edge += 1
+        else:
+            self.current_consecutive_frames_at_right_edge = 0
+
     def state_hash(self) -> str:
         payload = json.dumps(self.get_state(), sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
@@ -2302,11 +2389,21 @@ class HeliAttack2Env(gym.Env):
                 "frames_jump_pressed": self.frames_jump_pressed,
                 "jump_presses_grounded": self.jump_presses_grounded,
                 "jump_presses_airborne": self.jump_presses_airborne,
-                "frames_moving_left": self.frames_moving_left,
-                "frames_moving_right": self.frames_moving_right,
-                "frames_not_moving_horizontally": self.frames_not_moving_horizontally,
-                "min_player_x": self.min_player_x,
-                "max_player_x": self.max_player_x,
+                "frames_pressing_left": self.frames_pressing_left,
+                "frames_pressing_right": self.frames_pressing_right,
+                "frames_pressing_neutral": self.frames_pressing_neutral,
+                "frames_actual_moving_left": self.frames_actual_moving_left,
+                "frames_actual_moving_right": self.frames_actual_moving_right,
+                "frames_actual_not_moving_horizontally": self.frames_actual_not_moving_horizontally,
+                "sum_abs_player_dx": float(self.sum_abs_player_dx),
+                "frames_at_left_edge": self.frames_at_left_edge,
+                "frames_at_right_edge": self.frames_at_right_edge,
+                "max_consecutive_frames_at_left_edge": self.max_consecutive_frames_at_left_edge,
+                "max_consecutive_frames_at_right_edge": self.max_consecutive_frames_at_right_edge,
+                "frames_pressing_left_at_left_edge": self.frames_pressing_left_at_left_edge,
+                "frames_pressing_right_at_right_edge": self.frames_pressing_right_at_right_edge,
+                "min_player_x": float(self.min_player_x),
+                "max_player_x": float(self.max_player_x),
             }
             info["movement_diagnostics"] = movement
             info.update(movement)
@@ -2334,6 +2431,11 @@ class MovementScriptedAttackDirectWrapper(gym.ActionWrapper):
     def __init__(self, env: gym.Env):
         super().__init__(env)
         self.action_space = spaces.MultiDiscrete([3, 2, 2, 2])
+        self.control_mode = CONTROL_MODE_MOVEMENT_SCRIPTED_ATTACK_DIRECT
+        self.policy_action_space_nvec = [int(v) for v in self.action_space.nvec.tolist()]
+        self.sim_action_space_nvec = FULL_SIM_ACTION_NVEC.copy()
+        self.last_policy_action = [1, 0, 0, 0]
+        self.last_full_action = [1, 0, 0, 0, DEFAULT_AIM_BIN, 0]
 
     def action(self, action: np.ndarray | list[int]) -> np.ndarray:
         move_a, jump_a, duck_a, boost_a = int(action[0]), int(action[1]), int(action[2]), int(action[3])
@@ -2347,7 +2449,9 @@ class MovementScriptedAttackDirectWrapper(gym.ActionWrapper):
             aim_bin = base_env.aim_bin_for_world_target(float(enemy["x"]), float(enemy["y"]))
             fire_a = 1
             
-        return np.array([move_a, jump_a, duck_a, boost_a, aim_bin, fire_a], dtype=np.int32)
+        self.last_policy_action = [move_a, jump_a, duck_a, boost_a]
+        self.last_full_action = [move_a, jump_a, duck_a, boost_a, int(aim_bin), int(fire_a)]
+        return np.array(self.last_full_action, dtype=np.int32)
 
 class MovementNoBoostScriptedAttackDirectWrapper(gym.ActionWrapper):
     """
@@ -2357,6 +2461,11 @@ class MovementNoBoostScriptedAttackDirectWrapper(gym.ActionWrapper):
     def __init__(self, env: gym.Env):
         super().__init__(env)
         self.action_space = spaces.MultiDiscrete([3, 2, 2])
+        self.control_mode = CONTROL_MODE_MOVEMENT_NO_BOOST_SCRIPTED_ATTACK_DIRECT
+        self.policy_action_space_nvec = [int(v) for v in self.action_space.nvec.tolist()]
+        self.sim_action_space_nvec = FULL_SIM_ACTION_NVEC.copy()
+        self.last_policy_action = [1, 0, 0]
+        self.last_full_action = [1, 0, 0, 0, DEFAULT_AIM_BIN, 0]
 
     def action(self, action: np.ndarray | list[int]) -> np.ndarray:
         move_a, jump_a, duck_a = int(action[0]), int(action[1]), int(action[2])
@@ -2371,7 +2480,59 @@ class MovementNoBoostScriptedAttackDirectWrapper(gym.ActionWrapper):
             aim_bin = base_env.aim_bin_for_world_target(float(enemy["x"]), float(enemy["y"]))
             fire_a = 1
             
-        return np.array([move_a, jump_a, duck_a, boost_a, aim_bin, fire_a], dtype=np.int32)
+        self.last_policy_action = [move_a, jump_a, duck_a]
+        self.last_full_action = [move_a, jump_a, duck_a, boost_a, int(aim_bin), int(fire_a)]
+        if self.last_full_action[3] != 0:
+            raise AssertionError("movement_no_boost_scripted_attack_direct produced boost=1")
+        return np.array(self.last_full_action, dtype=np.int32)
+
+
+def apply_control_mode(env: gym.Env, control_mode: str) -> gym.Env:
+    if control_mode == CONTROL_MODE_FULL:
+        return env
+    if control_mode == CONTROL_MODE_MOVEMENT_SCRIPTED_ATTACK_DIRECT:
+        return MovementScriptedAttackDirectWrapper(env)
+    if control_mode == CONTROL_MODE_MOVEMENT_NO_BOOST_SCRIPTED_ATTACK_DIRECT:
+        return MovementNoBoostScriptedAttackDirectWrapper(env)
+    raise ValueError(f"Unknown control_mode: {control_mode}")
+
+
+def make_controlled_env(
+    *,
+    render_mode: str | None = None,
+    control_mode: str = CONTROL_MODE_FULL,
+    **kwargs: Any,
+) -> gym.Env:
+    return apply_control_mode(
+        HeliAttack2Env(render_mode=render_mode, **kwargs),
+        control_mode,
+    )
+
+
+def get_policy_action(env: gym.Env, fallback: list[int] | np.ndarray | None = None) -> list[int]:
+    value = getattr(env, "last_policy_action", None)
+    if value is None:
+        value = fallback if fallback is not None else getattr(env.unwrapped, "last_action", [])
+    return [int(v) for v in np.asarray(value, dtype=np.int64).flatten().tolist()]
+
+
+def get_full_action(env: gym.Env, fallback: list[int] | np.ndarray | None = None) -> list[int]:
+    value = getattr(env, "last_full_action", None)
+    if value is None:
+        value = getattr(env.unwrapped, "last_action", fallback if fallback is not None else [])
+    return [int(v) for v in np.asarray(value, dtype=np.int64).flatten().tolist()]
+
+
+def action_space_nvec(env: gym.Env) -> list[int]:
+    return [int(v) for v in env.action_space.nvec.tolist()]
+
+
+def policy_action_space_nvec(env: gym.Env) -> list[int]:
+    return [int(v) for v in getattr(env, "policy_action_space_nvec", action_space_nvec(env))]
+
+
+def sim_action_space_nvec(env: gym.Env) -> list[int]:
+    return [int(v) for v in getattr(env, "sim_action_space_nvec", FULL_SIM_ACTION_NVEC)]
 
 
 if __name__ == "__main__":

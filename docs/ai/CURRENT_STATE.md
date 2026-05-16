@@ -28,12 +28,14 @@ Last updated: 2026-05-16 Europe/Paris
 - Experiments are now the default unit of RL artifact storage: `scripts.train_parkour` creates `experiments/ha2_000001_YYYYMMDD_HHMM_combat-v1_1k/`-style runs with `config.json`, `git_info.txt`, `summary.md`, `models/`, `reports/`, `replays/`, and `tensorboard/`.
 - `scripts.evaluate_model` and `scripts.watch_model` resolve `best`/`latest` models from an experiment and auto-detect the correct `control_mode` from `config.json`.
 - `scripts.play_replay` and `scripts.watch_model` now support an `F` fast-forward toggle for faster GUI inspection.
-- `scripts.run_experiment` orchestrates training and evaluation, supporting `--net-arch`, `--control-mode`, and producing consolidated diagnostic bundles.
-- `scripts.run_experiment_pair` supports comparative A/B benchmarks with individual `duration_seconds` reporting and consolidated Super-Bundles.
-- `ha2_env.py` tracks detailed firing metrics and movement diagnostics (grounded/airborne frames, boost activations, lateral range), evaluated after physics execution.
+- `scripts.run_experiment` orchestrates training and evaluation, supporting `--net-arch`, `--control-mode`, `--eval-freq-timesteps`, and producing consolidated diagnostic bundles.
+- `scripts.run_experiment_pair` supports comparative A/B benchmarks with individual `duration_seconds` reporting and consolidated Super-Bundles, including a `rich` TUI for parallel live monitoring.
+- `ha2_env.py` tracks 25+ movement and edge-camping diagnostics (grounded/airborne frames, boost activations, lateral range, consecutive edge frames, mismatch rates), evaluated after physics execution.
 - Policy architecture and parameter counts are recorded in `config.json`.
 - PPO runtime timing (rollout vs training vs overhead) is tracked and reported using the `TimedPPO` subclass.
 - Experiments can now be synchronized across machines using WandB Artifacts.
+- `experiments/latest_experiment.txt` (or symlink) is updated at every run to point to the newest artifact directory.
+- Pytest suite is optimized via `SMOKE_STEPS=16` and `@pytest.mark.slow` categorization, reducing quick-pass time from >2min to ~10s.
 - Charles manually exercised GUI play/replay checks and reported they looked OK.
 
 ## What Is Unknown
@@ -43,7 +45,6 @@ Last updated: 2026-05-16 Europe/Paris
 - MachineGun/Heli combat GUI feel still needs Charles manual checks.
 - Exact Flash sprite visibility is not proven for defensive diagnostics.
 - Model pickling errors during `EvalCallback` checkpoints are resolved via `TimedPPO`, but broad cross-platform serialization needs further verification.
-- "Ghost" boost activations in M0 curriculum reports (even when wrapper forces `boost=0`) need investigation.
 
 ## Current Architecture
 - `ha2_env.py` contains the main runtime architecture: environment state, player physics, default MachineGun/bullets, one default Heli enemy target, collision checks against `const.FULL_MAP_DATA`, rendering, and state/hash debug hooks.

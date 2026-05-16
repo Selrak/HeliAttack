@@ -40,7 +40,8 @@ def main(args_list: list[str] | None = None) -> None:
     parser.add_argument("--save-replay", nargs="?", const=DEFAULT_OUTPUT, default=None, type=str)
     parser.add_argument("--record-gif", nargs="?", const=DEFAULT_OUTPUT, default=None, type=str)
     parser.add_argument("--training-profile", choices=["legacy", "combat_v1", "combat_bullets_v1"], default="combat_v1")
-    parser.add_argument("--control-mode", choices=["full", "movement_scripted_attack_direct", "movement_no_boost_scripted_attack_direct"], default="full")
+    from ha2_env import CONTROL_MODE_FULL, CONTROL_MODES
+    parser.add_argument("--control-mode", choices=sorted(CONTROL_MODES), default=CONTROL_MODE_FULL)
     parser.add_argument("--max-episode-steps", type=int, default=1800)
     args = parser.parse_args(args_list)
 
@@ -74,11 +75,12 @@ def main(args_list: list[str] | None = None) -> None:
     os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
     import pygame
 
-    from ha2_env import HeliAttack2Env
+    from ha2_env import get_full_action, get_policy_action, make_controlled_env
     from ha2_replay import JsonlReplayWriter
 
-    env = HeliAttack2Env(
+    env = make_controlled_env(
         render_mode="human",
+        control_mode=args.control_mode,
         auto_render=False,
         training_profile=args.training_profile,
         max_episode_steps=args.max_episode_steps,
@@ -136,7 +138,20 @@ def main(args_list: list[str] | None = None) -> None:
             action_list = [int(v) for v in action]
             obs, reward, terminated, truncated, info = env.step(action_list)
             if writer is not None:
-                writer.append_step(env, action_list, obs, reward, terminated, truncated, info)
+                policy_action = get_policy_action(env, action_list)
+                full_action = get_full_action(env, action_list)
+                writer.append_step(
+                    env,
+                    full_action,
+                    obs,
+                    reward,
+                    terminated,
+                    truncated,
+                    info,
+                    policy_action=policy_action,
+                    full_action=full_action,
+                    control_mode=args.control_mode,
+                )
             env.render(
                 debug_overlay=True,
                 debug_collision=False,

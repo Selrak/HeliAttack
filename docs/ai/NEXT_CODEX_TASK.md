@@ -2,247 +2,215 @@
 
 ## Goal
 
-Finish the HA2 RL instrumentation bugfix pass by fixing the remaining concrete issues found in the current source and smoke artifacts.
+Fix horizontal-movement diagnostics and clarify training-time eval frequency.
 
-This is a small bugfix/validation task. Do not run a new long experiment.
-
-## Non-goals
-
-Do not change simulator mechanics, rewards, observations, action space, PPO hyperparameters, training profiles, or replay semantics.
-
-Do not add curriculum logic.
-
-Do not rerun 500k experiments.
+This is diagnostics/reporting only. Do not change simulator mechanics, rewards, observations, action spaces, PPO defaults, replay determinism, or curriculum control modes.
 
 ## Context
 
-Current source/artifact inspection found:
+Replay inspection suggests the movement-curriculum agents may camp near the world edge rather than performing useful lateral dodging.
 
-1. Movement diagnostic counters are initialized and exported, but most are not incremented in `ha2_env.step()`.
-   - `boost_activations` increments.
-   - `frames_grounded`, `frames_airborne`, `frames_jump_pressed`, `frames_boost_pressed`, `frames_moving_left/right`, etc. remain zero in smoke reports.
-   - This contradicts `marginal_action_distributions`, which show non-zero jump/boost/duck/move usage.
+Source inspection found concrete diagnostic issues:
 
-2. `test_rl_diagnostics.py` only checks that movement diagnostic keys exist; it does not verify that counters increase or are coherent.
+- `min_player_x` and `max_player_x` are initialized/exported but not updated during `step()`.
+- `frames_moving_left/right` currently count requested movement inputs, not actual post-physics horizontal movement.
+- `evaluate_model.py` tracks `max_x` locally, but not `min_x`, true x-range, actual dx, or edge-camping.
+- `--eval-freq` is still confusing because SB3 counts VecEnv callback calls, not raw environment transitions.
 
-3. The successful pair smoke still produced `pair_summary.json` with `timing_report_path: null`.
-   - Current source may now contain a partial fix, but it was not validated after the last edit.
+## Non-goals
 
-4. Parallel job duration reporting is wrong with stagger:
-   - job B duration is measured from job A start (`start_tick_total`) instead of job B start.
+Do not add anti-wall-camping reward shaping yet.
 
-5. `config.json` records `net_arch`, but `trainable_parameters` and `activation_fn` are still missing/None in the generated ZIPs.
-   - Likely cause: `train_parkour.py` rewrites `config.json` without `allow_overwrite=True`, inside a silent `except`.
+Do not penalize jumping, ducking, boosting, or edge usage.
 
-6. Timing PPO itself appears mostly fixed:
-   - `TimedPPO` separates rollout and train update time.
-   - `other_overhead` no longer subtracts overlapping train-time eval.
-   - Keep this design unless a test proves it broken.
+Do not rerun long 100k/500k experiments unless explicitly asked.
 
 ## Files to inspect first
 
 - `ha2_env.py`
+- `scripts/evaluate_model.py`
 - `scripts/train_parkour.py`
 - `scripts/run_experiment.py`
 - `scripts/run_experiment_pair.py`
-- `scripts/runtime_timing.py`
-- `scripts/evaluate_model.py`
-- `tests/test_benchmark_orchestration.py`
 - `tests/test_rl_diagnostics.py`
-- `docs/ai/CURRENT_STATE.md`
-- `docs/ai/VALIDATION.md`
-- `docs/ai/CODEX_SESSION_LOG.md`
+- `tests/test_curriculum.py`
 
 ## Implementation plan
 
-### 1. Fix movement diagnostics in `ha2_env.step()`
+### 1. Fix `min_player_x` / `max_player_x`
 
-Add actual per-step increments.
+In `ha2_env.step()`, after physics/collision resolution and before returning `info`, update:
 
-Use action-based counters:
-
-- `frames_jump_pressed`
-- `frames_boost_pressed`
-- `frames_moving_left`
-- `frames_moving_right`
-- `frames_not_moving_horizontally`
-
-Use actual post-physics state for:
-
-- `frames_grounded`
-- `frames_airborne`
 - `min_player_x`
 - `max_player_x`
+- `player_x_range`
 
-Handle boost carefully:
+Use the actual final post-physics `self._x`.
 
-- compute boost readiness before consuming hyperjump charge;
-- increment `frames_boost_ready` from pre-action readiness;
-- increment `frames_boost_pressed_ready` / `frames_boost_pressed_not_ready` from pre-action readiness;
-- increment `boost_activations` only when hyperjump actually triggers.
+### 2. Split requested movement from actual movement
 
-Do not alter movement mechanics.
+Keep backward compatibility if useful, but make semantics explicit.
 
-### 2. Fix config metadata overwrite
+Preferred new metrics:
 
-In `train_parkour.py`, when adding:
+- `frames_pressing_left`
+- `frames_pressing_right`
+- `frames_pressing_neutral`
 
-- `trainable_parameters`
-- `activation_fn`
+and separately:
 
-rewrite `config.json` with `allow_overwrite=True`.
+- `frames_actual_moving_left`
+- `frames_actual_moving_right`
+- `frames_actual_not_moving_horizontally`
+- `mean_abs_player_dx`
+- `sum_abs_player_dx`
 
-Do not silently swallow failures. Replace `except Exception: pass` with at least a warning.
+Compute actual movement from:
 
-Tests must assert that `trainable_parameters` is a positive integer for a smoke run.
+- `previous_x` saved at the start of `step()`;
+- `dx = self._x - previous_x` after physics/collision.
 
-### 3. Fix parallel job duration reporting
+Use a small epsilon to avoid floating noise.
 
-In `run_experiment_pair.py`:
+### 3. Add wall/edge-camping diagnostics
 
-- record `start_tick_a`;
-- record `start_tick_b`;
-- compute job A duration as `end_tick_a - start_tick_a`;
-- compute job B duration as `end_tick_b - start_tick_b`;
-- keep `total_parallel_duration` measured from first job start to last job end.
+Track:
 
-Add a simple test or helper-level assertion so this cannot regress.
+- `frames_at_left_edge`
+- `frames_at_right_edge`
+- `fraction_at_left_edge`
+- `fraction_at_right_edge`
+- `max_consecutive_frames_at_left_edge`
+- `max_consecutive_frames_at_right_edge`
+- `frames_pressing_left_at_left_edge`
+- `frames_pressing_right_at_right_edge`
 
-### 4. Validate/fix pair timing report paths
+Compute edge state from actual position with a documented tolerance.
 
-Ensure both sequential and parallel modes discover timing reports from `experiment_path`.
+Prefer using helpers based on the same boundary formulas implied by collision handling, not arbitrary magic values.
 
-When timing reports exist, `pair_summary.json` must not leave timing fields null.
+### 4. Add input-vs-motion mismatch diagnostics
 
-At minimum record:
+Add derived metrics:
 
-- `timing_report_path`
-- or better:
-  - `train_timing_json`
-  - `train_timing_md`
-  - `orchestration_timing_json`
-  - `orchestration_timing_md`
+- `left_press_effective_motion_rate`
+- `right_press_effective_motion_rate`
+- `horizontal_action_without_motion_fraction`
 
-Then rerun the pair smoke after this fix.
+This must catch the case where the policy holds left while blocked by the world edge.
 
-### 5. Tighten bundle validation
+### 5. Update evaluation reports
 
-The diagnostic bundle should include all existing relevant artifacts:
+Update `scripts/evaluate_model.py` so `eval_latest.json`, `eval_best.json`, `episodes_detail`, and aggregate `metrics` include:
 
-- `config.json`
-- `git_info.txt`
-- `summary.md`
-- `eval_best.json` when produced
-- `eval_latest.json`
-- `best_eval_ep0.jsonl` when produced
-- `latest_eval_ep0.jsonl`
-- `train_timing.json`
-- `train_timing.md`
-- `orchestration_timing.json`
-- `orchestration_timing.md`
+- `episode_min_x`
+- `episode_max_x`
+- `episode_x_range`
+- `player_x_range`
+- actual movement counters;
+- edge-camping counters;
+- input-vs-motion mismatch rates.
 
-Existence checks are fine because small runs with `--train-eval off` may not produce `best.zip`, `eval_best.json`, or `best_eval_ep0.jsonl`.
+The report should make it obvious whether the agent is actually traversing the map or just pressing directions while stuck.
 
-### 6. Strengthen tests
+### 6. Clarify eval frequency semantics
 
-Update tests so they fail on the current bugs.
+Do not silently change existing `--eval-freq`.
 
-Required tests:
+Add:
 
-- direct env smoke:
-  - reset `HeliAttack2Env(training_profile="combat_v1")`;
-  - run forced actions with move/jump/duck/boost;
-  - verify movement counters are not all zero;
-  - verify `frames_grounded + frames_airborne` is close to number of steps;
-  - verify movement left/right counters reflect forced move actions.
+- `--eval-freq-timesteps`
 
-- evaluation/report smoke:
-  - run a tiny `run_experiment`;
-  - verify movement metrics in `eval_latest.json` are numeric and plausible;
-  - verify they are not all zero when action marginals show non-zero actions.
+If provided, convert raw timesteps to SB3 VecEnv callback steps:
 
-- bundle smoke:
-  - verify ZIP includes timing files and latest eval/replay;
-  - best eval/replay optional unless produced.
+- `eval_freq_vec_steps = max(1, eval_freq_timesteps // n_envs)`
 
-- pair smoke:
-  - verify pair summary has non-null timing report fields after a parallel run;
-  - verify job A/B durations are individually measured from their own starts;
-  - verify seed A and seed B remain explicit.
+If both `--eval-freq` and `--eval-freq-timesteps` are passed, fail clearly.
 
-- config metadata:
-  - verify `net_arch == "128,128"` or `"32,32"` in smoke config;
-  - verify `trainable_parameters` is present and > 0;
-  - verify `activation_fn` is present when SB3 exposes it.
+Record in config/summary/timing:
 
-Remove or replace placeholder tests that only contain `pass`.
+- `eval_freq`
+- `eval_freq_timesteps`
+- `effective_eval_freq_vec_steps`
+- `n_envs`
+- estimated expected training eval count.
+
+Pass this through `run_experiment.py` and `run_experiment_pair.py`.
+
+### 7. Add replay-inspection convenience
+
+In experiment and pair summaries, include concise copy-paste replay commands for produced latest eval replays, for example:
+
+- `.venv\Scripts\python.exe -m scripts.play_replay <path>`
+
+Keep this short.
+
+### 8. Tests
+
+Add or update tests that fail on the current bug:
+
+- `min_player_x/max_player_x` update when the player moves.
+- `episode_min_x/max_x/x_range` are correct in an eval smoke.
+- requested movement counters and actual movement counters are distinct.
+- holding left against the left edge increments edge/blocked diagnostics.
+- `horizontal_action_without_motion_fraction` is nonzero when pressing into a wall.
+- `--eval-freq-timesteps` converts correctly for `n_envs=1` and `n_envs=4`.
+- passing both `--eval-freq` and `--eval-freq-timesteps` fails clearly.
+- reports contain the new metrics.
+
+Keep tests short.
 
 ## Validation
 
-Run with the venv Python explicitly on Windows:
+Run:
 
-- `.venv\Scripts\python.exe -m py_compile ha2_env.py scripts/runtime_timing.py scripts/train_parkour.py scripts/run_experiment.py scripts/run_experiment_pair.py scripts/evaluate_model.py`
+- `.venv\Scripts\python.exe -m py_compile ha2_env.py scripts/evaluate_model.py scripts/train_parkour.py scripts/run_experiment.py scripts/run_experiment_pair.py`
 - `.venv\Scripts\python.exe -m pytest`
 
-Run a fresh single-job smoke:
+Run a small M0/M1 smoke:
 
-- `.venv\Scripts\python.exe -m scripts.run_experiment --training-profile combat_bullets_v1 --total-timesteps 1000 --n-envs 1 --vec-env dummy --wandb off --train-eval off --eval-episodes 1 --save-replays --timing-profile on --torch-num-threads 2 --net-arch 128,128`
+- `.venv\Scripts\python.exe -m scripts.run_experiment_pair --mode parallel --profile-a combat_bullets_v1 --profile-b combat_bullets_v1 --control-mode-a movement_no_boost_scripted_attack_direct --control-mode-b movement_scripted_attack_direct --label-a M0_no_boost --label-b M1_boost --total-timesteps 10000 --n-envs 4 --vec-env dummy --wandb off --train-eval on --eval-freq-timesteps 5000 --train-eval-episodes 1 --eval-episodes 2 --save-replays --net-arch 128,128 --threads-per-job 6 --timing-profile on --seed 0 --seed-b 0`
 
-Run a fresh pair smoke after all fixes:
+Inspect and report:
 
-- `.venv\Scripts\python.exe -m scripts.run_experiment_pair --mode parallel --profile-a combat_v1 --profile-b combat_bullets_v1 --total-timesteps 1000 --n-envs 1 --vec-env dummy --wandb off --train-eval off --eval-episodes 1 --save-replays --timing-profile on --threads-per-job 2 --net-arch 128,128 --stagger-seconds 0 --seed 0 --seed-b 0`
+- pair path;
+- M0/M1 experiment paths;
+- effective eval frequency;
+- train eval count;
+- min/max/range X;
+- actual horizontal movement fractions;
+- edge-camping fractions;
+- max consecutive edge frames;
+- input-vs-motion mismatch;
+- replay commands.
 
-Then inspect and report:
-
-- pair smoke path;
-- experiment paths;
-- pair timing paths;
-- ZIP contents for both jobs;
-- movement metric values from both `eval_latest.json`;
-- action marginal distributions from both `eval_latest.json`;
-- training timing split from both `train_timing.json`;
-- `config.json` policy metadata;
-- git status.
-
-Run replay validation only if replay-affecting state or mechanics changed unexpectedly:
-
-- `.venv\Scripts\python.exe -m scripts.record_random_replay --steps 300 --out replays/smoke.jsonl`
-- `.venv\Scripts\python.exe -m scripts.verify_replay replays/smoke.jsonl`
-- `.venv\Scripts\python.exe -m scripts.record_scripted_trace --scenario all`
-- `.venv\Scripts\python.exe -m scripts.verify_replay reports/parity_traces/walk_right_120.jsonl`
-- `.venv\Scripts\python.exe -m scripts.verify_replay reports/parity_traces/fire_right_60.jsonl`
-- `.venv\Scripts\python.exe -m scripts.verify_replay reports/parity_traces/fire_at_heli_180.jsonl`
-- `.venv\Scripts\python.exe -m scripts.verify_replay reports/parity_traces/heli_shoots_hero_240.jsonl`
-- `.venv\Scripts\python.exe -m scripts.verify_replay reports/parity_traces/kill_heli_respawn_600.jsonl`
+Verify generated eval replays.
 
 ## Acceptance criteria
 
 Complete only if:
 
-- movement counters increment correctly in direct env stepping;
-- fresh eval reports no longer show impossible all-zero movement diagnostics;
-- action marginals and movement diagnostics are not contradictory;
-- pair summary timing paths are non-null after a fresh post-fix pair smoke;
-- parallel job durations are measured from each job’s own start time;
-- diagnostic ZIPs include timing files and latest eval/replay;
-- config records `net_arch`, `trainable_parameters`, and `activation_fn` when available;
-- timing reports still have `train_update_count == rollout_count`;
-- `other_or_unclassified_training_seconds >= 0`;
-- all tests pass;
-- no simulator mechanics/reward/observation/action-space/replay behavior is intentionally changed.
+- `min_player_x/max_player_x/player_x_range` are trustworthy.
+- Reports distinguish requested movement from actual movement.
+- Edge-camping is explicitly measured.
+- Pressing into a wall is measurable.
+- `--eval-freq-timesteps` works and is recorded.
+- Summaries include replay commands.
+- All tests pass.
+- Existing full-action and curriculum training still work.
+- No mechanics/reward/observation/action-space changes are made.
 
 ## Stop conditions
 
 Stop and report if:
 
-- making movement diagnostics reliable would require changing movement mechanics;
-- timing report paths cannot be discovered robustly from experiment paths;
-- config metadata cannot be recorded without broader refactor;
-- model saving fails again with `TimedPPO`;
-- replay hashes change unexpectedly;
-- tests become long or flaky.
+- true edge detection is ambiguous without changing collision mechanics;
+- new diagnostics would change replay hashes/state;
+- `--eval-freq-timesteps` conflicts with SB3 behavior in a non-obvious way;
+- tests become slow or flaky;
+- fixing this would require reward shaping.
 
-## Required Codex session log
+## Required log update
 
 Update:
 
@@ -255,15 +223,9 @@ Log:
 - files changed;
 - commands run;
 - pass/fail result;
-- direct movement diagnostic test result;
-- single-job smoke path;
-- pair smoke path;
-- pair timing paths;
-- ZIP contents confirmation;
-- movement metric values;
-- config metadata values;
-- timing split values;
+- smoke paths;
+- new diagnostic values;
+- eval-frequency behavior;
+- replay commands;
 - remaining risks;
 - suggested next step.
-
-Le point le plus urgent est vraiment le compteur mouvement : tant que frames_* restent à zéro, on ne peut pas interpréter correctement les politiques frénétiques ni décider proprement entre “gros réseau”, “top-3/top-5 bullets” ou “curriculum mouvement avec attaque scriptée”.
