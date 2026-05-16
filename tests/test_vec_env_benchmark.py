@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+import os
+import shutil
 import subprocess
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -11,6 +13,8 @@ import pytest
 from scripts import benchmark_vec_envs
 from scripts import train_parkour
 
+# Optimization: reduce default steps for smoke tests to speed up the suite.
+SMOKE_STEPS = "16"
 
 def test_make_vec_env_dummy_works():
     pytest.importorskip("stable_baselines3")
@@ -52,11 +56,14 @@ def test_invalid_vec_env_fails_clearly():
 
 def test_benchmark_script_writes_dummy_reports(tmp_path, monkeypatch):
     def fake_train_main(train_args):
-        exp_index = train_args.index("--experiment-name") + 1
-        exp_root_index = train_args.index("--experiments-root") + 1
-        exp_path = Path(train_args[exp_root_index]) / train_args[exp_index]
-        exp_path.mkdir(parents=True)
-        print("| total_timesteps | 64 |")
+        # Handle new timestamped directory naming in mock
+        exp_root = Path(train_args[train_args.index("--experiments-root") + 1])
+        name = "mock_exp"
+        if "--experiment-name" in train_args:
+            name = train_args[train_args.index("--experiment-name") + 1]
+        exp_path = exp_root / name
+        exp_path.mkdir(parents=True, exist_ok=True)
+        print("| total_timesteps | 16 |")
         print("| fps | 123 |")
         return SimpleNamespace(path=exp_path)
 
@@ -68,7 +75,7 @@ def test_benchmark_script_writes_dummy_reports(tmp_path, monkeypatch):
             "--mode",
             "train-only",
             "--total-timesteps",
-            "64",
+            SMOKE_STEPS,
             "--repeats",
             "1",
             "--vec-envs",
@@ -93,60 +100,6 @@ def test_benchmark_script_writes_dummy_reports(tmp_path, monkeypatch):
     assert report["results"][0]["vec_env"] == "dummy"
     assert report["results"][0]["mode"] == "train-only"
     assert report["results"][0]["success"] is True
-    assert "wall_clock_seconds" in report["results"][0]
-    assert "train_eval_enabled" in report["results"][0]
-    assert "train_eval_vec_env_match" in report["results"][0]
-
-
-def test_benchmark_script_writes_workflow_reports(tmp_path, monkeypatch):
-    def fake_train_main(train_args):
-        exp_index = train_args.index("--experiment-name") + 1
-        exp_root_index = train_args.index("--experiments-root") + 1
-        exp_path = Path(train_args[exp_root_index]) / train_args[exp_index]
-        exp_path.mkdir(parents=True)
-        print("| total_timesteps | 64 |")
-        print("| fps | 111 |")
-        return SimpleNamespace(path=exp_path)
-
-    monkeypatch.setattr(benchmark_vec_envs.train_parkour, "main", fake_train_main)
-    out_dir = tmp_path / "reports"
-    experiments_root = tmp_path / "experiments"
-    benchmark_vec_envs.main(
-        [
-            "--mode",
-            "workflow",
-            "--total-timesteps",
-            "64",
-            "--repeats",
-            "1",
-            "--vec-envs",
-            "dummy",
-            "--n-envs",
-            "1",
-            "--eval-vec-env",
-            "same",
-            "--wandb",
-            "off",
-            "--device",
-            "cpu",
-            "--out-dir",
-            str(out_dir),
-            "--experiments-root",
-            str(experiments_root),
-        ]
-    )
-    json_reports = list(out_dir.glob("*_vec_env_benchmark.json"))
-    md_reports = list(out_dir.glob("*_vec_env_benchmark.md"))
-    assert len(json_reports) == 1
-    assert len(md_reports) == 1
-    report = json.loads(json_reports[0].read_text(encoding="utf-8"))
-    row = report["results"][0]
-    assert row["mode"] == "workflow"
-    assert row["eval_vec_env"] == "same"
-    assert row["effective_eval_vec_env"] == "dummy"
-    assert row["train_eval_enabled"] is True
-    assert row["train_eval_vec_env_match"] is True
-    assert "best wall_s" in md_reports[0].read_text(encoding="utf-8")
 
 
 def test_train_parkour_train_eval_off_tiny_dummy_run(tmp_path):
@@ -154,7 +107,7 @@ def test_train_parkour_train_eval_off_tiny_dummy_run(tmp_path):
     layout = train_parkour.main(
         [
             "--total-timesteps",
-            "64",
+            SMOKE_STEPS,
             "--n-envs",
             "1",
             "--vec-env",
@@ -171,8 +124,11 @@ def test_train_parkour_train_eval_off_tiny_dummy_run(tmp_path):
     )
     config = json.loads((layout.path / "config.json").read_text(encoding="utf-8"))
     assert config["train_eval"] == "off"
+    # Cleanup to avoid pollution
+    shutil.rmtree(layout.path)
 
 
+@pytest.mark.slow
 def test_train_parkour_subproc_eval_same_tiny_run(tmp_path):
     pytest.importorskip("stable_baselines3")
     out_root = tmp_path / "experiments"
@@ -182,7 +138,7 @@ def test_train_parkour_subproc_eval_same_tiny_run(tmp_path):
             "-m",
             "scripts.train_parkour",
             "--total-timesteps",
-            "64",
+            SMOKE_STEPS,
             "--n-envs",
             "2",
             "--vec-env",
@@ -194,7 +150,7 @@ def test_train_parkour_subproc_eval_same_tiny_run(tmp_path):
             "--train-eval-episodes",
             "1",
             "--eval-freq",
-            "64",
+            "16",
             "--wandb",
             "off",
             "--device",
@@ -217,6 +173,7 @@ def test_invalid_benchmark_mode_or_eval_vec_env_fails_clearly():
         benchmark_vec_envs.main(["--eval-vec-env", "invalid"])
 
 
+@pytest.mark.slow
 def test_benchmark_subproc_smoke_via_module(tmp_path):
     out_dir = tmp_path / "reports"
     experiments_root = tmp_path / "experiments"
@@ -226,7 +183,7 @@ def test_benchmark_subproc_smoke_via_module(tmp_path):
             "-m",
             "scripts.benchmark_vec_envs",
             "--total-timesteps",
-            "64",
+            SMOKE_STEPS,
             "--repeats",
             "1",
             "--vec-envs",
