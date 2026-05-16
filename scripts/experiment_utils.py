@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -183,6 +184,29 @@ def create_experiment_layout(
     if path.exists():
         raise FileExistsError(f"Experiment directory already exists: {path}")
     path.mkdir(parents=True, exist_ok=False)
+
+    # Update latest_experiment symlink (or copy on Windows if symlink fails)
+    latest_link = experiments_root / "latest_experiment"
+    try:
+        if latest_link.exists():
+            if latest_link.is_symlink():
+                latest_link.unlink()
+            elif latest_link.is_dir():
+                # If it's a real directory for some reason, don't delete it
+                latest_link = None
+
+        if latest_link:
+            # On Windows, symlinks might require admin privileges.
+            # We try to create a directory junction or a symlink.
+            # If it fails, we just skip it or log a warning.
+            try:
+                os.symlink(path.relative_to(experiments_root), latest_link, target_is_directory=True)
+            except (OSError, NotImplementedError):
+                # Fallback: create a small text file with the path if symlink fails
+                (experiments_root / "latest_experiment.txt").write_text(str(path), encoding="utf-8")
+    except Exception as e:
+        print(f"Warning: Could not update latest_experiment link: {e}")
+
     layout = ExperimentLayout(experiments_root, path)
     layout.ensure_directories()
     return layout

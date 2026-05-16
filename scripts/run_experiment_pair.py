@@ -11,6 +11,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Dict
 
+from ha2_env import CONTROL_MODE_FULL, CONTROL_MODES
+
 @dataclass
 class JobResult:
     command: List[str]
@@ -95,9 +97,9 @@ def main() -> None:
     parser.add_argument("--mode", choices=["sequential", "parallel", "both"], default="both")
     parser.add_argument("--profile-a", default="combat_v1")
     parser.add_argument("--profile-b", default="combat_bullets_v1")
-    parser.add_argument("--control-mode", default="full", help="Default control mode for both jobs")
-    parser.add_argument("--control-mode-a", default=None, help="Control mode for job A (overrides --control-mode)")
-    parser.add_argument("--control-mode-b", default=None, help="Control mode for job B (overrides --control-mode)")
+    parser.add_argument("--control-mode", choices=sorted(CONTROL_MODES), default=CONTROL_MODE_FULL, help="Default control mode for both jobs")
+    parser.add_argument("--control-mode-a", choices=sorted(CONTROL_MODES), default=None, help="Control mode for job A (overrides --control-mode)")
+    parser.add_argument("--control-mode-b", choices=sorted(CONTROL_MODES), default=None, help="Control mode for job B (overrides --control-mode)")
     parser.add_argument("--label-a", default="job_a")
     parser.add_argument("--label-b", default="job_b")
     parser.add_argument("--seed", type=int, default=0, help="Seed for job A (and job B if --seed-b is not set)")
@@ -112,6 +114,7 @@ def main() -> None:
     parser.add_argument("--wandb", default="off")
     parser.add_argument("--train-eval", default="on")
     parser.add_argument("--eval-freq", type=int, default=None)
+    parser.add_argument("--eval-freq-timesteps", type=int, default=None)
     parser.add_argument("--train-eval-episodes", type=int, default=5)
     parser.add_argument("--eval-episodes", type=int, default=5)
     parser.add_argument("--save-replays", action="store_true")
@@ -128,6 +131,23 @@ def main() -> None:
     root_log_dir = Path(f"experiments/pair_{timestamp}")
     root_log_dir.mkdir(parents=True, exist_ok=True)
     
+    # Update latest_experiment link to point to the pair root
+    latest_link = root_log_dir.parent / "latest_experiment"
+    try:
+        if latest_link.exists():
+            if latest_link.is_symlink():
+                latest_link.unlink()
+            elif latest_link.is_dir():
+                latest_link = None
+
+        if latest_link:
+            try:
+                os.symlink(root_log_dir.relative_to(root_log_dir.parent), latest_link, target_is_directory=True)
+            except (OSError, NotImplementedError):
+                (root_log_dir.parent / "latest_experiment.txt").write_text(str(root_log_dir), encoding="utf-8")
+    except Exception as e:
+        print(f"Warning: Could not update latest_experiment link: {e}")
+
     print(f"Pair benchmark root: {root_log_dir}")
     print(f"Threads per job: {num_threads} (OMP/MKL/TORCH)")
     
@@ -147,6 +167,8 @@ def main() -> None:
         common_args.extend(["--net-arch", args.net_arch])
     if args.eval_freq:
         common_args.extend(["--eval-freq", str(args.eval_freq)])
+    if args.eval_freq_timesteps:
+        common_args.extend(["--eval-freq-timesteps", str(args.eval_freq_timesteps)])
     if args.save_replays:
         common_args.append("--save-replays")
 
@@ -158,16 +180,25 @@ def main() -> None:
         
         control_mode_a = args.control_mode_a if args.control_mode_a is not None else args.control_mode
         control_mode_b = args.control_mode_b if args.control_mode_b is not None else args.control_mode
-        args_a = common_args + ["--training-profile", args.profile_a, "--control-mode", control_mode_a, "--seed", str(args.seed)]
-        seed_b = args.seed_b if args.seed_b is not None else args.seed
-        args_b = common_args + ["--training-profile", args.profile_b, "--control-mode", control_mode_b, "--seed", str(seed_b)]
 
-        # Prevent collisions if both jobs share the same profile and start at the same minute
-        args_a.extend(["--experiment-name", f"{args.profile_a}_{control_mode_a}_{args.total_timesteps}_a"])
-        args_b.extend(["--experiment-name", f"{args.profile_b}_{control_mode_b}_{args.total_timesteps}_b"])
-        
+        # Prevent collisions by always adding timestamp and job suffix
+        # Use the same timestamp as the pair folder for consistency
+        ts = timestamp # Already defined in main()
+        args_a = common_args + [
+            "--training-profile", args.profile_a,
+            "--control-mode", control_mode_a,
+            "--seed", str(args.seed),
+            "--experiment-name", f"{ts}_{args.profile_a}_{control_mode_a}_{args.total_timesteps}_a"
+        ]
+        seed_b = args.seed_b if args.seed_b is not None else args.seed
+        args_b = common_args + [
+            "--training-profile", args.profile_b,
+            "--control-mode", control_mode_b,
+            "--seed", str(seed_b),
+            "--experiment-name", f"{ts}_{args.profile_b}_{control_mode_b}_{args.total_timesteps}_b"
+        ]
+
         mode_results = {}
-        
         if mode_name == "sequential":
             print(f"\n--- Running Sequential Mode ---")
             mode_results["job_a"] = run_job("sequential_job_a", args_a, thread_env, pair_dir)
@@ -186,31 +217,99 @@ def main() -> None:
             start_tick_total = time.perf_counter()
             start_tick_a = start_tick_total
             
-            print(f"[{start_dt_a.strftime('%H:%M:%S')}] Starting Job A...")
-            f_out_a = open(stdout_a, "w")
-            f_err_a = open(stderr_a, "w")
-            proc_a = subprocess.Popen(cmd_a, stdout=f_out_a, stderr=f_err_a, env=thread_env, text=True)
+            import queue
+            import threading
+            from collections import deque
+            try:
+                from rich.live import Live
+                from rich.layout import Layout
+                from rich.panel import Panel
+                from rich.text import Text
+            except ImportError as exc:
+                raise SystemExit("Error: 'rich' library is required for parallel mode. Run 'pip install -r requirements.txt'") from exc
+
+            log_q = queue.Queue()
+            lines_a = deque(maxlen=25)
+            lines_b = deque(maxlen=25)
             
+            lines_a.append(f"[{start_dt_a.strftime('%H:%M:%S')}] Starting Job A...")
             if args.stagger_seconds > 0:
-                print(f"Waiting {args.stagger_seconds}s stagger...")
-                time.sleep(args.stagger_seconds)
+                lines_b.append(f"[{start_dt_a.strftime('%H:%M:%S')}] Waiting {args.stagger_seconds}s stagger before starting Job B...")
+
+            def update_layout():
+                l = Layout()
+                l.split_column(
+                    Layout(Panel(Text("\n".join(lines_a)), title="[cyan]Job A[/cyan]", border_style="cyan")),
+                    Layout(Panel(Text("\n".join(lines_b)), title="[magenta]Job B[/magenta]", border_style="magenta"))
+                )
+                return l
+
+            def reader_thread(proc, f_out, q_name):
+                for line in iter(proc.stdout.readline, ''):
+                    f_out.write(line)
+                    f_out.flush()
+                    log_q.put((q_name, line.rstrip('\n')))
+                proc.stdout.close()
+
+            f_out_a = open(stdout_a, "w")
+            proc_a = subprocess.Popen(cmd_a, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=thread_env, text=True, bufsize=1)
+            t_a = threading.Thread(target=reader_thread, args=(proc_a, f_out_a, "A"), daemon=True)
+            t_a.start()
             
-            start_dt_b = datetime.now()
-            start_tick_b = time.perf_counter()
-            print(f"[{start_dt_b.strftime('%H:%M:%S')}] Starting Job B...")
-            f_out_b = open(stdout_b, "w")
-            f_err_b = open(stderr_b, "w")
-            proc_b = subprocess.Popen(cmd_b, stdout=f_out_b, stderr=f_err_b, env=thread_env, text=True)
-            
+            proc_b = None
+            f_out_b = None
+            t_b = None
+            start_dt_b = None
+            start_tick_b = None
+
+            with Live(update_layout(), refresh_per_second=10) as live:
+                def process_queue():
+                    updated = False
+                    while not log_q.empty():
+                        job, line = log_q.get_nowait()
+                        if job == "A":
+                            lines_a.append(line)
+                        else:
+                            lines_b.append(line)
+                        updated = True
+                    if updated:
+                        live.update(update_layout())
+
+                if args.stagger_seconds > 0:
+                    start_wait = time.time()
+                    while time.time() - start_wait < args.stagger_seconds:
+                        process_queue()
+                        if proc_a.poll() is not None:
+                            break # Job A finished extremely fast
+                        time.sleep(0.1)
+
+                start_dt_b = datetime.now()
+                start_tick_b = time.perf_counter()
+                lines_b.append(f"[{start_dt_b.strftime('%H:%M:%S')}] Starting Job B...")
+                process_queue()
+                
+                f_out_b = open(stdout_b, "w")
+                proc_b = subprocess.Popen(cmd_b, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=thread_env, text=True, bufsize=1)
+                t_b = threading.Thread(target=reader_thread, args=(proc_b, f_out_b, "B"), daemon=True)
+                t_b.start()
+                
+                while proc_a.poll() is None or proc_b.poll() is None:
+                    process_queue()
+                    time.sleep(0.1)
+                
+                t_a.join()
+                t_b.join()
+                process_queue()
+
             exit_a = proc_a.wait()
             end_tick_a = time.perf_counter()
             f_out_a.close()
-            f_err_a.close()
+            Path(stderr_a).touch()
             
             exit_b = proc_b.wait()
             end_tick_b = time.perf_counter()
             f_out_b.close()
-            f_err_b.close()
+            Path(stderr_b).touch()
             
             total_duration = time.perf_counter() - start_tick_total
             
@@ -277,6 +376,15 @@ def main() -> None:
         md_lines.append(f"- Job A Duration: {par['job_a'].duration_seconds:.2f}s")
         md_lines.append(f"- Job B Duration: {par['job_b'].duration_seconds:.2f}s")
         md_lines.append(f"- **Total Wallclock (Concurrent): {total_par:.2f}s**")
+        md_lines.append("")
+        
+        md_lines.append("### Replay Inspection")
+        for job_name in ["job_a", "job_b"]:
+            job_res = par.get(job_name)
+            if job_res and job_res.experiment_path:
+                md_lines.append(f"#### {job_name} ({job_res.experiment_path})")
+                md_lines.append(f"- Watch best: `python -m scripts.watch_model --experiment {job_res.experiment_path} --model-choice best`")
+                md_lines.append(f"- Watch latest: `python -m scripts.watch_model --experiment {job_res.experiment_path} --model-choice latest`")
         md_lines.append("")
 
     if "sequential" in results and "parallel" in results:

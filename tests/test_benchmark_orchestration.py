@@ -27,8 +27,8 @@ def test_parallel_staggered_durations():
     
     args = [
         "--mode", "parallel",
-        "--profile-a", "legacy",
-        "--profile-b", "legacy",
+        "--profile-a", "combat_v1",
+        "--profile-b", "combat_v1",
         "--total-timesteps", "10",
         "--n-envs", "1",
         "--vec-env", "dummy",
@@ -58,10 +58,8 @@ def test_parallel_staggered_durations():
         job_b = summary["parallel"]["job_b"]
         total = summary["parallel"]["total_parallel_duration"]
         
-        # 10 timesteps on legacy profile should take < 1.0 seconds to run.
-        # But stagger is 2 seconds. Job B starts after 2s.
-        # So Job B's own duration must not include the 2s wait!
-        assert job_b["duration_seconds"] < 2.0, f"Job B duration {job_b['duration_seconds']} should not include stagger"
+        # Job B's own duration must not include the 2s wait before it starts.
+        assert job_b["duration_seconds"] < total - 1.0, f"Job B duration {job_b['duration_seconds']} should not include stagger"
         assert total >= 2.0, f"Total duration {total} must include stagger"
         
         # Cleanup
