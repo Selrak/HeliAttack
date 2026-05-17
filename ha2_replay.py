@@ -45,6 +45,7 @@ class JsonlReplayWriter:
             "env_name": ENV_NAME,
             "env_version": ENV_VERSION,
             "training_profile": base_env.training_profile,
+            "reward_profile": getattr(base_env, "reward_profile", "combat_default"),
             "max_episode_steps": base_env.max_episode_steps,
             "control_mode": getattr(env, "control_mode", CONTROL_MODE_FULL),
             "policy_action_space_nvec": policy_action_space_nvec(env),
@@ -94,8 +95,10 @@ class JsonlReplayWriter:
                 "state_hash": base_env.state_hash(),
                 "debug": {
                     "control_mode": control_mode,
+                    "reward_profile": getattr(base_env, "reward_profile", "combat_default"),
                     "policy_action": policy_action,
                     "full_action": full_action,
+                    "reward_breakdown": info.get("reward_breakdown"),
                     "camera": info.get("camera"),
                     "contact": info.get("contact"),
                     "grounded": info.get("grounded"),
@@ -145,6 +148,7 @@ def verify_replay_file(path: str | Path) -> int:
     env = HeliAttack2Env(
         render_mode=None,
         training_profile=header.get("training_profile", "legacy"),
+        reward_profile=header.get("reward_profile", "combat_default"),
         max_episode_steps=header.get("max_episode_steps"),
     )
     obs, _info = env.reset(seed=int(header["seed"]))

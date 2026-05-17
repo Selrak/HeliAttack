@@ -11,7 +11,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Dict
 
-from ha2_env import CONTROL_MODE_FULL, CONTROL_MODES, REWARD_PROFILES
+from ha2_env import TRAINING_PROFILES
+from scripts.runtime_config import (
+    DEFAULT_CONTROL_MODE,
+    DEFAULT_MAX_EPISODE_STEPS,
+    DEFAULT_REWARD_PROFILE,
+    DEFAULT_TRAINING_PROFILE,
+    CONTROL_MODES,
+    REWARD_PROFILES,
+)
 
 @dataclass
 class JobResult:
@@ -95,12 +103,12 @@ def run_job(name: str, args: List[str], env: Dict[str, str], log_dir: Path) -> J
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run A/B experiment pair sequentially or in parallel.")
     parser.add_argument("--mode", choices=["sequential", "parallel", "both"], default="both")
-    parser.add_argument("--profile-a", default="combat_v1")
-    parser.add_argument("--profile-b", default="combat_bullets_v1")
-    parser.add_argument("--control-mode", choices=sorted(CONTROL_MODES), default=CONTROL_MODE_FULL, help="Default control mode for both jobs")
+    parser.add_argument("--profile-a", choices=sorted(TRAINING_PROFILES), default=DEFAULT_TRAINING_PROFILE)
+    parser.add_argument("--profile-b", choices=sorted(TRAINING_PROFILES), default="combat_bullets_v1")
+    parser.add_argument("--control-mode", choices=sorted(CONTROL_MODES), default=DEFAULT_CONTROL_MODE, help="Default control mode for both jobs")
     parser.add_argument("--control-mode-a", choices=sorted(CONTROL_MODES), default=None, help="Control mode for job A (overrides --control-mode)")
     parser.add_argument("--control-mode-b", choices=sorted(CONTROL_MODES), default=None, help="Control mode for job B (overrides --control-mode)")
-    parser.add_argument("--reward-profile", choices=sorted(REWARD_PROFILES), default="combat_default", help="Default reward profile for both jobs")
+    parser.add_argument("--reward-profile", choices=sorted(REWARD_PROFILES), default=DEFAULT_REWARD_PROFILE, help="Default reward profile for both jobs")
     parser.add_argument("--reward-profile-a", choices=sorted(REWARD_PROFILES), default=None, help="Reward profile for job A (overrides --reward-profile)")
     parser.add_argument("--reward-profile-b", choices=sorted(REWARD_PROFILES), default=None, help="Reward profile for job B (overrides --reward-profile)")
     parser.add_argument("--label-a", default="job_a")
@@ -120,6 +128,7 @@ def main() -> None:
     parser.add_argument("--eval-freq-timesteps", type=int, default=None)
     parser.add_argument("--train-eval-episodes", type=int, default=5)
     parser.add_argument("--eval-episodes", type=int, default=5)
+    parser.add_argument("--max-episode-steps", type=int, default=DEFAULT_MAX_EPISODE_STEPS)
     parser.add_argument("--save-replays", action="store_true")
     parser.add_argument("--net-arch", type=str, default=None)
     parser.add_argument("--device", default="auto")
@@ -162,6 +171,7 @@ def main() -> None:
         "--train-eval", args.train_eval,
         "--train-eval-episodes", str(args.train_eval_episodes),
         "--eval-episodes", str(args.eval_episodes),
+        "--max-episode-steps", str(args.max_episode_steps),
         "--device", args.device,
         "--timing-profile", args.timing_profile,
         "--torch-num-threads", str(num_threads)

@@ -7,9 +7,12 @@ import zipfile
 
 from scripts import train_parkour
 from scripts import evaluate_model
-from ha2_env import CONTROL_MODE_FULL, CONTROL_MODES, REWARD_PROFILES
+from scripts.runtime_config import (
+    add_runtime_config_args,
+    resolve_runtime_config,
+)
 
-def main() -> None:
+def main(args_list: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Orchestrate HA2 PPO training and evaluation.")
     parser.add_argument("--total-timesteps", type=int, default=10_000)
     parser.add_argument("--seed", type=int, default=0)
@@ -25,15 +28,13 @@ def main() -> None:
     parser.add_argument("--eval-episodes", type=int, default=5)
     parser.add_argument("--experiment-name", type=str, default=None)
     parser.add_argument("--save-replays", action="store_true")
-    parser.add_argument("--training-profile", choices=["legacy", "combat_v1", "combat_bullets_v1"], default="combat_v1")
-    parser.add_argument("--reward-profile", choices=sorted(REWARD_PROFILES), default="combat_default")
-    parser.add_argument("--control-mode", choices=sorted(CONTROL_MODES), default=CONTROL_MODE_FULL)
-    parser.add_argument("--max-episode-steps", type=int, default=1800)
+    add_runtime_config_args(parser)
     parser.add_argument("--watch", action="store_true")
     parser.add_argument("--net-arch", type=str, default=None, help="Comma-separated list of hidden layer sizes (e.g. '128,128')")
     parser.add_argument("--timing-profile", choices=["on", "off"], default="off")
     parser.add_argument("--torch-num-threads", type=int, default=None)
-    args = parser.parse_args()
+    args = parser.parse_args(args_list)
+    runtime_config = resolve_runtime_config(args)
 
     import time
     orchestration_start = time.perf_counter()
@@ -48,10 +49,10 @@ def main() -> None:
         "--eval-vec-env", args.eval_vec_env,
         "--device", str(args.device),
         "--wandb", args.wandb,
-        "--training-profile", args.training_profile,
-        "--reward-profile", args.reward_profile,
-        "--control-mode", args.control_mode,
-        "--max-episode-steps", str(args.max_episode_steps),
+        "--training-profile", runtime_config.training_profile,
+        "--reward-profile", runtime_config.reward_profile,
+        "--control-mode", runtime_config.control_mode,
+        "--max-episode-steps", str(runtime_config.max_episode_steps),
         "--no-wandb-finish",
         "--timing-profile", args.timing_profile,
     ]
@@ -80,9 +81,10 @@ def main() -> None:
             "--model-choice", model_choice,
             "--episodes", str(args.eval_episodes),
             "--seed", str(args.seed + 1000),
-            "--training-profile", args.training_profile,
-            "--control-mode", args.control_mode,
-            "--max-episode-steps", str(args.max_episode_steps),
+            "--training-profile", runtime_config.training_profile,
+            "--reward-profile", runtime_config.reward_profile,
+            "--control-mode", runtime_config.control_mode,
+            "--max-episode-steps", str(runtime_config.max_episode_steps),
         ]
         if args.save_replays:
             eval_args.append("--save-replays")

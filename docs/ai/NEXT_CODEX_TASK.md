@@ -2,141 +2,171 @@
 
 ## Goal
 
-Implement and test the first defensive curriculum reward profile:
+Implement an opt-in `pressure_profile` curriculum layer to reduce enemy Heli fire frequency during training/evaluation/manual play.
 
-- `M0_defense`: no boost, scripted direct attack, defensive reward.
-- `M1_defense`: boost allowed, scripted direct attack, defensive reward.
-
-The goal is to make bullet avoidance matter much more than merely surviving long enough to kill Helis.
+This is meant to make movement ↔ bullet-avoidance causality easier to learn without changing bullet speed, bullet damage, player physics, observations, action spaces, or the default game behavior.
 
 ## Non-goals
 
-Do not change HA2 mechanics, physics, bullets, Heli logic, observations, action spaces, replay determinism, or existing default rewards.
+Do not change default HA2 mechanics.
 
-Do not remove boost.
+Do not change bullet speed, bullet damage, Heli movement, player movement, rewards, observations, action spaces, or replay semantics for default runs.
 
-Do not add new observation fields yet.
+Do not add trajectory-distance shaping or near-miss reward.
 
 Do not run 500k yet.
 
 ## Context
 
-Current M0/M1 curriculum works mechanically:
+`defense_v1` is now technically active: 10 player damage gives about `-10`, not the old `-0.99`.
 
-- M0 uses `movement_no_boost_scripted_attack_direct`.
-- M1 uses `movement_scripted_attack_direct`.
-- Both use `combat_bullets_v1`, which already exposes visible enemy bullet relative positions and bullet velocity fields.
+However, M0_defense still tends to fail/camp, and M1_defense improves mostly through boost/mobility rather than clean bullet avoidance.
 
-Current problem:
+Next curriculum idea: keep the same bullets, same damage, same physics, but reduce enemy fire frequency temporarily so PPO can more clearly learn the causal link between movement and avoided impacts.
 
-- M0 tends to camp/stall and die.
-- M1 performs much better, but mainly through boost-heavy survival.
-- We need a reward profile that strongly rewards not taking damage while still requiring offensive progress, without rewarding passive hiding/camping.
+## Implement `pressure_profile`
 
-## Implementation
+Add supported values:
 
-Add a new opt-in reward profile:
+- `normal`
+- `enemy_fire_slow_2x`
+- `enemy_fire_slow_4x`
 
-- `combat_default`: current reward, default, unchanged.
-- `defense_v1`: new curriculum reward.
+Default must be `normal`.
 
-Add `reward_profile` to `HeliAttack2Env`, config, summaries, eval reports, replays if practical, and CLIs:
+Semantics:
+
+- `normal`: current behavior, unchanged.
+- `enemy_fire_slow_2x`: enemy Helis fire half as often.
+- `enemy_fire_slow_4x`: enemy Helis fire one quarter as often.
+
+Prefer implementing this by scaling the enemy Heli fire interval / reload threshold, not by changing bullet speed, bullet damage, bullet collision, or bullet lifetime.
+
+Keep constants easy to find in code.
+
+## CLI support
+
+Add `--pressure-profile` to:
 
 - `scripts.train_parkour`
 - `scripts.run_experiment`
 - `scripts.run_experiment_pair`
 - `scripts.evaluate_model`
 - `scripts.watch_model`
+- `scripts.play_human`
 
-Evaluation/watch should infer `reward_profile` from `config.json` when given an experiment.
+Add pair-runner overrides:
 
-## Suggested `defense_v1` reward
+- `--pressure-profile`
+- `--pressure-profile-a`
+- `--pressure-profile-b`
 
-Keep exact constants easy to find in code.
+Common `--pressure-profile` applies to both jobs unless overridden.
 
-Initial proposal:
+## Manual play support
 
-- living: `0.0`
-- enemy damage: `0.03 * score_delta`
-- Heli kill: `3.0 * killed_helis`
-- player damage: `-1.0 * player_damage`
-  - so one 10-damage bullet costs `-10`
-- terminal death/fall: `-50.0`
-- mild edge/input inefficiency penalty:
-  - small penalty when pressing into a physical edge/wall without actual horizontal movement;
-  - small penalty for prolonged edge camping;
-  - do not over-penalize brief tactical edge contact.
+`play_human` must accept `--pressure-profile`.
 
-Expose all terms in `reward_breakdown`.
+This is important: manual human play should be able to test the same reduced-fire regimes used by RL.
 
-Do not penalize boost, jump, or duck directly.
+Examples should work:
 
-## Anti-camping scope
+- `.venv\Scripts\python.exe -m scripts.play_human --pressure-profile normal`
+- `.venv\Scripts\python.exe -m scripts.play_human --pressure-profile enemy_fire_slow_2x`
+- `.venv\Scripts\python.exe -m scripts.play_human --pressure-profile enemy_fire_slow_4x`
 
-Use existing/new diagnostics only.
+The debug panel should show the active pressure profile and enough enemy-fire counters to verify the cadence difference.
 
-For now, penalize:
+## Replay / watch / verification support
 
-- prolonged left/right edge camping;
-- repeated horizontal input with no actual horizontal movement.
+Record `pressure_profile` in replay headers.
 
-Do not attempt full line-of-sight or “hiding behind scenery” detection yet unless it is trivial and robust.
+Replay verification must instantiate/replay with the recorded `pressure_profile`.
 
-The reward must still require offensive progress through enemy damage/kills, so passive hiding with no hits should not be attractive.
+`play_replay` must display or at least preserve the pressure profile from the replay header. It should not require a manual `--pressure-profile` for existing replay files unless overriding is explicitly requested.
 
-## Pair runner support
+`watch_model` must infer `pressure_profile` from the experiment `config.json`, like `control_mode` and `reward_profile`.
 
-Add:
+If `watch_model --pressure-profile ...` is passed explicitly, it may override config, but this must be clearly logged.
 
-- `--reward-profile`
-- `--reward-profile-a`
-- `--reward-profile-b`
+## Reports, summaries, graphs
 
-to `scripts.run_experiment_pair.py`.
+Record `pressure_profile` in:
 
-Common `--reward-profile` should apply to both jobs unless overridden.
+- `config.json`
+- `summary.md`
+- `eval_best.json`
+- `eval_latest.json`
+- replay header
+- pair summary JSON/Markdown
+- timing/orchestration metadata if practical
+
+Update all summary tables/graphs/plots produced by the experiment pipeline so comparisons label:
+
+- training profile
+- control mode
+- reward profile
+- pressure profile
+
+Any generated comparison graph must not silently compare runs with different pressure profiles without showing the difference.
+
+Also finish the small reporting gap from the previous reward-profile work:
+
+- include `reward_profile` in replay headers;
+- include `reward_profile` in eval reports;
+- expose `reward_breakdown` in eval reports and replay debug if practical.
 
 ## Tests
 
 Add tests for:
 
-- default reward unchanged for `combat_default`;
-- `defense_v1` applies much stronger player-damage penalty;
-- `reward_profile` is stored in `config.json`;
-- `evaluate_model` reports `reward_profile`;
-- `run_experiment_pair` forwards A/B reward profiles correctly;
-- M0 still produces no boost with `defense_v1`;
-- M1 still allows boost with `defense_v1`;
-- reward breakdown contains all `defense_v1` terms.
+- default `pressure_profile="normal"` preserves current enemy fire cadence;
+- `enemy_fire_slow_2x` fires less often than normal over a deterministic fixed horizon;
+- `enemy_fire_slow_4x` fires less often than `enemy_fire_slow_2x`;
+- bullet speed/damage are unchanged under pressure profiles;
+- `pressure_profile` is recorded in config/eval/replay header;
+- replay verification uses the recorded `pressure_profile`;
+- `play_human` accepts all pressure-profile values;
+- `watch_model` infers pressure profile from config;
+- `run_experiment_pair` forwards common and A/B pressure profiles;
+- default old commands still work without specifying pressure profile.
 
-Keep tests short.
+Keep tests short and deterministic.
 
 ## Validation
 
 Run:
 
-- `.venv\Scripts\python.exe -m py_compile ha2_env.py scripts/train_parkour.py scripts/evaluate_model.py scripts/run_experiment.py scripts/run_experiment_pair.py scripts/watch_model.py`
+- `.venv\Scripts\python.exe -m py_compile ha2_env.py ha2_replay.py scripts/train_parkour.py scripts/evaluate_model.py scripts/watch_model.py scripts/play_human.py scripts/play_replay.py scripts/run_experiment.py scripts/run_experiment_pair.py`
 - `.venv\Scripts\python.exe -m pytest`
 
-Run quick smokes:
+Run manual-play smoke only far enough to confirm startup/argument parsing if GUI automation is impractical:
 
-- `.venv\Scripts\python.exe -m scripts.run_experiment --training-profile combat_bullets_v1 --control-mode movement_no_boost_scripted_attack_direct --reward-profile defense_v1 --total-timesteps 1000 --n-envs 1 --vec-env dummy --wandb off --train-eval off --eval-episodes 1 --save-replays --timing-profile on --torch-num-threads 2 --net-arch 128,128`
+- `.venv\Scripts\python.exe -m scripts.play_human --pressure-profile enemy_fire_slow_4x`
 
-- `.venv\Scripts\python.exe -m scripts.run_experiment --training-profile combat_bullets_v1 --control-mode movement_scripted_attack_direct --reward-profile defense_v1 --total-timesteps 1000 --n-envs 1 --vec-env dummy --wandb off --train-eval off --eval-episodes 1 --save-replays --timing-profile on --torch-num-threads 2 --net-arch 128,128`
+Run small training smokes:
 
-Then run the first real comparison:
+- `.venv\Scripts\python.exe -m scripts.run_experiment --training-profile combat_bullets_v1 --control-mode movement_scripted_attack_direct --reward-profile defense_v1 --pressure-profile enemy_fire_slow_4x --total-timesteps 1000 --n-envs 1 --vec-env dummy --wandb off --train-eval off --eval-episodes 1 --save-replays --timing-profile on --torch-num-threads 2 --net-arch 128,128`
 
-- `.venv\Scripts\python.exe -m scripts.run_experiment_pair --mode parallel --profile-a combat_bullets_v1 --profile-b combat_bullets_v1 --control-mode-a movement_no_boost_scripted_attack_direct --control-mode-b movement_scripted_attack_direct --reward-profile-a defense_v1 --reward-profile-b defense_v1 --label-a M0_defense --label-b M1_defense --total-timesteps 100000 --n-envs 4 --vec-env dummy --wandb off --train-eval on --eval-freq-timesteps 50000 --train-eval-episodes 2 --eval-episodes 5 --save-replays --net-arch 128,128 --threads-per-job 6 --timing-profile on --seed 0 --seed-b 0`
+- `.venv\Scripts\python.exe -m scripts.run_experiment --training-profile combat_bullets_v1 --control-mode movement_scripted_attack_direct --reward-profile defense_v1 --pressure-profile normal --total-timesteps 1000 --n-envs 1 --vec-env dummy --wandb off --train-eval off --eval-episodes 1 --save-replays --timing-profile on --torch-num-threads 2 --net-arch 128,128`
+
+Verify that slow-fire produces fewer enemy bullets spawned over comparable episodes, while bullet speed/damage remain unchanged.
+
+Then run first curriculum comparison, not 500k:
+
+- `.venv\Scripts\python.exe -m scripts.run_experiment_pair --mode parallel --profile-a combat_bullets_v1 --profile-b combat_bullets_v1 --control-mode-a movement_no_boost_scripted_attack_direct --control-mode-b movement_scripted_attack_direct --reward-profile-a defense_v1 --reward-profile-b defense_v1 --pressure-profile-a enemy_fire_slow_4x --pressure-profile-b enemy_fire_slow_4x --label-a M0_defense_slow4 --label-b M1_defense_slow4 --total-timesteps 100000 --n-envs 4 --vec-env dummy --wandb off --train-eval on --eval-freq-timesteps 50000 --train-eval-episodes 2 --eval-episodes 5 --save-replays --net-arch 128,128 --threads-per-job 6 --timing-profile on --seed 0 --seed-b 0`
 
 ## Inspect after 100k
 
-Report for M0_defense and M1_defense:
+Report for M0 and M1:
 
 - reward;
 - Heli kills;
 - player damage;
 - death rate;
 - visible bullet hit rate;
+- enemy bullets spawned;
+- enemy visible bullet pressure;
 - time to first damage;
 - longest damage-free streak;
 - damage-free episode rate;
@@ -146,31 +176,33 @@ Report for M0_defense and M1_defense:
 - actual horizontal movement fractions;
 - input-motion mismatch rate;
 - boost pressed / ready / activations;
+- pressure profile;
 - replay commands.
 
 ## Acceptance criteria
 
 Complete only if:
 
-- `combat_default` reward is unchanged;
-- `defense_v1` is opt-in and recorded everywhere;
-- M0_defense and M1_defense train/evaluate successfully;
-- M0_defense still has no boost in replay actions;
-- M1_defense still allows boost;
-- reports expose `reward_breakdown` and `reward_profile`;
-- 100k comparison completes;
-- diagnostic bundles include reports/replays/timing;
-- no simulator mechanics or observations are changed.
+- `normal` preserves current behavior.
+- Slow-fire profiles reduce enemy firing frequency only.
+- Bullet speed/damage/collision remain unchanged.
+- `play_human` can run with pressure profiles.
+- `watch_model` and `play_replay` handle pressure profile correctly.
+- Replay verification remains deterministic.
+- Reports and comparison graphs label pressure profile clearly.
+- Reward profile reporting gap is fixed.
+- 100k M0/M1 slow4 comparison completes.
+- No default simulator/reward/observation/action-space behavior changes.
 
 ## Stop conditions
 
 Stop and report if:
 
-- reward-profile plumbing would require changing core mechanics;
-- old experiments cannot be evaluated because of missing `reward_profile`;
-- M0 produces any boost action;
-- defense reward creates obvious passive no-attack behavior in smoke replays;
-- replay verification breaks;
+- enemy fire cadence cannot be changed without touching unrelated Heli behavior;
+- replay verification becomes ambiguous;
+- pressure profile is not recoverable from old replays/configs;
+- play_human/watch_model/play_replay need a broader refactor;
+- slow-fire changes bullet speed, damage, or collision behavior;
 - tests become slow or flaky.
 
 ## Required log update
@@ -186,9 +218,11 @@ Include:
 - files changed;
 - commands run;
 - pass/fail result;
+- proof of enemy fire-rate reduction;
+- proof bullet speed/damage unchanged;
 - smoke experiment paths;
 - 100k pair path;
-- key M0_defense/M1_defense metrics;
-- replay commands;
+- key metrics table;
+- replay/watch/play_human commands;
 - remaining risks;
 - suggested next step.

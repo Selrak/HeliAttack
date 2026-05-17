@@ -8,7 +8,6 @@ import numpy as np
 
 from ha2_env import (
     CONTROL_MODE_FULL,
-    CONTROL_MODES,
     FULL_SIM_ACTION_NVEC,
     action_space_nvec,
     get_full_action,
@@ -22,6 +21,12 @@ from scripts.experiment_utils import (
     ExperimentLayout,
     resolve_model_path,
     write_json_file,
+)
+from scripts.runtime_config import (
+    add_runtime_config_args,
+    explicit_runtime_overrides,
+    resolve_runtime_config,
+    runtime_env_kwargs,
 )
 
 
@@ -53,6 +58,23 @@ def aggregate_metric(stats: list[dict], key: str) -> dict[str, object]:
         "max": float(np.max(numeric_values)),
         "sum": float(np.sum(numeric_values)),
         "values": values,
+    }
+
+
+def aggregate_reward_breakdowns(stats: list[dict]) -> dict[str, dict[str, object]]:
+    terms = sorted(
+        {
+            term
+            for row in stats
+            for term in row.get("reward_breakdown", {})
+        }
+    )
+    return {
+        term: aggregate_metric(
+            [{"value": row.get("reward_breakdown", {}).get(term, 0.0)} for row in stats],
+            "value",
+        )
+        for term in terms
     }
 
 
@@ -133,6 +155,7 @@ def build_evaluation_report(
         "model": str(model_path),
         "model_choice": effective_model_choice,
         "training_profile": training_profile,
+        "reward_profile": experiment_config.get("reward_profile", "combat_default"),
         "control_mode": control_mode,
         "policy_action_space_nvec": experiment_config.get("policy_action_space_nvec"),
         "sim_action_space_nvec": experiment_config.get("sim_action_space_nvec", FULL_SIM_ACTION_NVEC),
@@ -224,6 +247,7 @@ def build_evaluation_report(
             "visible_enemy_bullets_over_top10_frame_rate": ratio_or_none(over_top10_frames_sum, total_actions),
         },
         "termination_reason_counts": dict(termination_reason_counts),
+        "reward_breakdown": aggregate_reward_breakdowns(stats),
         "policy_action_distributions": policy_action_distributions,
         "full_action_distributions": full_action_distributions,
         "marginal_action_distributions": full_action_distributions,
@@ -245,11 +269,7 @@ def main(args_list: list[str] | None = None) -> None:
     parser.add_argument("--replay-dir", type=Path, default=None)
     parser.add_argument("--report-name", type=str, default=None)
     parser.add_argument("--replay-prefix", type=str, default=None)
-    parser.add_argument("--training-profile", choices=["legacy", "combat_v1", "combat_bullets_v1"], default="combat_v1")
-    from ha2_env import REWARD_PROFILES
-    parser.add_argument("--reward-profile", choices=sorted(REWARD_PROFILES), default="combat_default")
-    parser.add_argument("--control-mode", choices=sorted(CONTROL_MODES), default=CONTROL_MODE_FULL)
-    parser.add_argument("--max-episode-steps", type=int, default=1800)
+    add_runtime_config_args(parser)
     args = parser.parse_args(args_list)
 
     PPO = _load_ppo()
@@ -265,12 +285,9 @@ def main(args_list: list[str] | None = None) -> None:
             import json
             with open(layout.config_path, "r") as f:
                 config = json.load(f)
-                if "training_profile" in config:
-                    args.training_profile = config["training_profile"]
-                if "reward_profile" in config:
-                    args.reward_profile = config["reward_profile"]
-                if "control_mode" in config:
-                    args.control_mode = config["control_mode"]
+    runtime_config = resolve_runtime_config(args, config)
+    for field, (config_value, cli_value) in explicit_runtime_overrides(args, config, runtime_config).items():
+        print(f"Runtime override: {field} {config_value!r} -> {cli_value!r}")
 
     model_path = resolve_model_path(
         model=args.model,
@@ -320,9 +337,7 @@ def main(args_list: list[str] | None = None) -> None:
     for episode in range(args.episodes):
         env = make_controlled_env(
             render_mode=None,
-            control_mode=args.control_mode,
-            training_profile=args.training_profile,
-            max_episode_steps=args.max_episode_steps,
+            **runtime_env_kwargs(runtime_config),
         )
         if runtime_policy_action_space_nvec is None:
             runtime_policy_action_space_nvec = policy_action_space_nvec(env)
@@ -341,6 +356,8 @@ def main(args_list: list[str] | None = None) -> None:
             replay_paths.append(str(replay_path))
 
         total_reward = 0.0
+        reward_breakdown_total: dict[str, float] = {}
+        final_reward_breakdown: dict[str, float] | None = None
         length = 0
         max_x = base_env._x
         actions = Counter()
@@ -368,9 +385,17 @@ def main(args_list: list[str] | None = None) -> None:
                         info,
                         policy_action=policy_action,
                         full_action=full_action,
-                        control_mode=args.control_mode,
+                        control_mode=runtime_config.control_mode,
                     )
                 total_reward += float(reward)
+                step_reward_breakdown = info.get("reward_breakdown")
+                if step_reward_breakdown is not None:
+                    final_reward_breakdown = {
+                        str(key): float(value)
+                        for key, value in step_reward_breakdown.items()
+                    }
+                    for key, value in final_reward_breakdown.items():
+                        reward_breakdown_total[key] = reward_breakdown_total.get(key, 0.0) + value
                 length += 1
                 max_x = max(max_x, base_env._x)
                 final_score = int(info.get("combat", {}).get("score", base_env.score))
@@ -390,6 +415,9 @@ def main(args_list: list[str] | None = None) -> None:
             {
                 "episode": episode,
                 "reward": total_reward,
+                "reward_profile": runtime_config.reward_profile,
+                "reward_breakdown": reward_breakdown_total,
+                "final_reward_breakdown": final_reward_breakdown,
                 "length": length,
                 "terminated": terminated,
                 "truncated": truncated,
@@ -469,7 +497,10 @@ def main(args_list: list[str] | None = None) -> None:
         )
 
     config = dict(config)
-    config.setdefault("control_mode", args.control_mode)
+    config["training_profile"] = runtime_config.training_profile
+    config["reward_profile"] = runtime_config.reward_profile
+    config["control_mode"] = runtime_config.control_mode
+    config["max_episode_steps"] = runtime_config.max_episode_steps
     config.setdefault("policy_action_space_nvec", runtime_policy_action_space_nvec)
     config.setdefault("sim_action_space_nvec", runtime_sim_action_space_nvec or FULL_SIM_ACTION_NVEC)
 
@@ -477,8 +508,8 @@ def main(args_list: list[str] | None = None) -> None:
         layout=layout,
         model_path=model_path,
         effective_model_choice=effective_model_choice,
-        training_profile=args.training_profile,
-        max_episode_steps=args.max_episode_steps,
+        training_profile=runtime_config.training_profile,
+        max_episode_steps=runtime_config.max_episode_steps,
         episodes=args.episodes,
         stats=stats,
         replay_paths=replay_paths,

@@ -910,7 +910,47 @@ Implement and test the first defensive curriculum reward profile (`defense_v1`) 
 - The edge camping penalty counts strictly on the outermost boundary of the map (`X < 1.0` or `X > width - 1`). If the agent finds a way to camp at `X = 2.0`, the penalty won't trigger.
 
 ### Suggested Next Step
-- Run a 100k comparison with the new defensive rewards.
+- Lancer de nouvelles expérimentations RL ou analyser les résultats existants.
+
+## 2026-05-17 01:00 Europe/Paris - Defensive Curriculum M0/M1 Benchmark
+
+### Task Attempted
+Evaluate the `defense_v1` reward profile on the `combat_bullets_v1` observation space using the M0/M1 movement curriculum to observe if penalizing edge camping and damage changes the policy's behavior.
+
+### Files Changed or Created
+- Updated `docs/ai/CODEX_SESSION_LOG.md`.
+
+### Commands Run
+- `python -m scripts.run_experiment_pair --mode parallel --profile-a combat_bullets_v1 --profile-b combat_bullets_v1 --control-mode-a movement_no_boost_scripted_attack_direct --control-mode-b movement_scripted_attack_direct --reward-profile-a defense_v1 --reward-profile-b defense_v1 --label-a M0_defense --label-b M1_defense --total-timesteps 100000 --n-envs 4 --vec-env dummy --wandb off --train-eval on --eval-freq-timesteps 50000 --train-eval-episodes 2 --eval-episodes 5 --save-replays --net-arch 128,128 --threads-per-job 6 --timing-profile on --seed 0 --seed-b 0`
+
+### Validation Result
+- Passed: The paired 100k execution completed successfully.
+- **M0 (No Boost) Evaluation:**
+  - Mean Reward: 106.35
+  - Mean Length: 1205.0
+  - Mean Player Damage: 100.0
+  - Edge Camping Rate: 59.3%
+  - Input Inefficiency Rate: 95.5%
+- **M1 (With Boost) Evaluation:**
+  - Mean Reward: 198.70
+  - Mean Length: 1800.0 (Survived)
+  - Mean Player Damage: 48.0
+  - Edge Camping Rate: 12.7%
+  - Input Inefficiency Rate: 26.0%
+
+### Repository Facts Discovered
+- The `defense_v1` reward profile completely successfully forces the agent out of the lazy "stand still and shoot" local minimum.
+- M0 gets pinned to the left edge and dies taking heavy damage because it cannot boost.
+- M1 successfully utilizes the boost to significantly reduce damage (from 100 down to 48), completely avoid death (lasting the full 1800 frames), and drastically reduce input inefficiency.
+
+### Architectural Discrepancies
+- None.
+
+### Remaining Risks
+- None.
+
+### Suggested Next Step
+- Introduce velocity-compensated or perfect-prediction aiming heuristcs to further isolate movement learning.
 
 ## 2026-05-16 00:00 Europe/Paris - Movement Curriculum (M0/M1) Implementation
 
@@ -1062,3 +1102,76 @@ Fix the movement-curriculum pipeline so M0 truly forbids boost, M1 allows boost,
 
 ### Suggested Next Step
 - Visually inspect the 10k M0/M1 replays, then rerun a clean 100k M0/M1 comparison if behavior looks plausible.
+
+## 2026-05-17 20:48 Europe/Paris - Fix Reward Profile Artifacts
+
+### Task Attempted
+Fix `defense_v1` propagation and expose reward metadata in evaluation reports and replays.
+
+### Files Changed
+- `ha2_replay.py`
+- `scripts/train_parkour.py`
+- `scripts/evaluate_model.py`
+- `scripts/run_experiment.py`
+- `tests/test_reward_profiles.py`
+- `tests/test_experiment_outputs.py`
+- `docs/ai/CURRENT_STATE.md`
+- `docs/ai/VALIDATION.md`
+- `docs/ai/CODEX_SESSION_LOG.md`
+
+### Validation
+- Passed: py_compile for core reward/replay/training scripts.
+- Passed: `.venv\Scripts\python.exe -m pytest -q` (`88 passed`).
+- Passed: 1k `combat_default` smoke `experiments/ha2_000084_20260517_2045_combat-bullets-v1_1k`.
+- Passed: 1k `defense_v1` smoke `experiments/ha2_000085_20260517_2045_combat-bullets-v1_1k`.
+- Passed: 10k M0/M1 defense pair `experiments/pair_20260517_204602`.
+- Passed: replay verification for the smoke and 10k latest eval replays.
+
+### Proof
+- Direct 10-damage test: `combat_default` reward `-0.99`; `defense_v1` reward `-10.0`.
+- New replay headers contain `reward_profile`.
+- New replay step debug contains `reward_breakdown`.
+- New eval reports contain top-level `reward_profile` and aggregated `reward_breakdown`.
+
+### Remaining Risks
+- The earlier 2026-05-17 15:25 100k run remains invalid for training because the training env used `combat_default` despite config naming `defense_v1`.
+- 10k defense smoke proves plumbing, not policy quality.
+
+### Suggested Next Step
+- Inspect `experiments/pair_20260517_204602`; if artifacts look correct, rerun a fresh 100k defense comparison.
+
+## 2026-05-17 21:35 Europe/Paris - Centralize Runtime Arguments
+
+### Task Attempted
+Centralize shared runtime argument/config handling for `training_profile`, `control_mode`, `reward_profile`, and `max_episode_steps`.
+
+### Files Changed
+- `scripts/runtime_config.py`
+- `scripts/train_parkour.py`
+- `scripts/evaluate_model.py`
+- `scripts/watch_model.py`
+- `scripts/play_human.py`
+- `scripts/run_experiment.py`
+- `scripts/run_experiment_pair.py`
+- `tests/test_runtime_config.py`
+- `docs/ai/CURRENT_STATE.md`
+- `docs/ai/VALIDATION.md`
+- `docs/ai/CODEX_SESSION_LOG.md`
+
+### Validation
+- Passed: required py_compile command.
+- Passed: `.venv\Scripts\python.exe -m pytest -q` (`94 passed`).
+- Passed: runtime smoke `experiments/ha2_000086_20260517_2133_combat-bullets-v1_1k`.
+- Passed: default train command `experiments/ha2_000087_20260517_2133_combat-v1_1024`.
+- Passed: replay verification for the runtime smoke latest eval replay.
+
+### Proof
+- Smoke config/report/replay header all resolved to `combat_bullets_v1`, `movement_scripted_attack_direct`, `defense_v1`, `1800`.
+- Default command resolved to `combat_v1`, `full`, `combat_default`, `1800`.
+- Tests cover config inference and CLI override for evaluation, watch config inference, script help acceptance, and runtime helper precedence.
+
+### Remaining Risks
+- `play_human` preserves its old default `legacy` profile; non-full control modes are explicit-only and use policy-style action inputs.
+
+### Suggested Next Step
+- Add `pressure_profile` using `scripts/runtime_config.py` instead of adding per-script arguments manually.

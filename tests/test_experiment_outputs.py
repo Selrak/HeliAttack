@@ -94,6 +94,7 @@ def test_evaluation_report_defensive_metrics_handle_no_damage(tmp_path):
     stats = [
         {
             "reward": 1.0,
+            "reward_breakdown": {"living": 0.2, "player_damage": 0.0},
             "length": 20,
             "termination_reason": "time_limit",
             "falls": 0,
@@ -105,6 +106,14 @@ def test_evaluation_report_defensive_metrics_handle_no_damage(tmp_path):
             "player_shots_spawn_blocked": 0,
             "total_player_damage": 0,
             "enemy_bullet_hits": 0,
+            "frames_pressing_left": 0,
+            "frames_pressing_right": 0,
+            "frames_actual_moving_left": 0,
+            "frames_actual_moving_right": 0,
+            "frames_at_left_edge": 0,
+            "frames_at_right_edge": 0,
+            "frames_pressing_left_at_left_edge": 0,
+            "frames_pressing_right_at_right_edge": 0,
             "final_score": 0,
             "max_score": 0,
             "visible_enemy_bullets_seen_unique": 0,
@@ -143,3 +152,82 @@ def test_evaluation_report_defensive_metrics_handle_no_damage(tmp_path):
     assert report["rates"]["damage_free_episode_rate"] == 1.0
     assert report["metrics"]["time_to_first_damage"]["mean"] is None
     assert report["metrics"]["longest_damage_free_streak"]["mean"] == 20.0
+    assert report["reward_breakdown"]["living"]["sum"] == 0.2
+    assert report["reward_breakdown"]["player_damage"]["sum"] == 0.0
+
+
+def test_run_experiment_forwards_reward_profile_to_final_eval(tmp_path, monkeypatch):
+    from scripts import run_experiment
+
+    layout = ExperimentLayout(tmp_path, tmp_path / "exp")
+    layout.ensure_directories()
+    layout.summary_path.write_text("# Summary\n", encoding="utf-8")
+    (layout.models_dir / "latest.zip").write_text("model", encoding="utf-8")
+
+    def fake_train(args_list):
+        assert "--reward-profile" in args_list
+        assert args_list[args_list.index("--reward-profile") + 1] == "defense_v1"
+        return layout
+
+    eval_calls = []
+
+    def fake_eval(args_list):
+        eval_calls.append(args_list)
+        assert "--reward-profile" in args_list
+        assert args_list[args_list.index("--reward-profile") + 1] == "defense_v1"
+        model_choice = args_list[args_list.index("--model-choice") + 1]
+        report = {
+            "metrics": {
+                "reward": {"mean": 0.0},
+                "length": {"mean": 1.0},
+                "heli_kills": {"mean": 0.0},
+                "player_damage": {"mean": 0.0},
+                "final_score": {"mean": 0.0},
+                "frames_grounded": {"mean": 0.0},
+                "frames_airborne": {"mean": 0.0},
+                "frames_pressing_left": {"mean": 0.0},
+                "frames_pressing_right": {"mean": 0.0},
+                "frames_actual_moving_left": {"mean": 0.0},
+                "frames_actual_moving_right": {"mean": 0.0},
+                "frames_boost_pressed": {"mean": 0.0},
+                "frames_boost_ready": {"mean": 0.0},
+                "boost_activations": {"mean": 0.0},
+                "frames_jump_pressed": {"mean": 0.0},
+                "visible_enemy_bullets_seen_unique": {"mean": 0.0},
+                "visible_enemy_bullets_max": {"mean": 0.0},
+                "visible_enemy_bullets_over_top10_frames": {"mean": 0.0},
+                "damage_events": {"mean": 0.0},
+                "time_to_first_damage": {"mean": None},
+                "longest_damage_free_streak": {"mean": 0.0},
+            },
+            "rates": {
+                "hit_rate": 0.0,
+                "death_rate": 0.0,
+                "timeout_rate": 0.0,
+                "visible_enemy_bullet_hit_rate_against_player": 0.0,
+                "damage_free_episode_rate": 1.0,
+                "input_motion_mismatch_rate": 0.0,
+                "left_edge_camping_rate": 0.0,
+                "right_edge_camping_rate": 0.0,
+            },
+            "net_arch": "test",
+        }
+        write_json_file(layout.report_path(model_choice), report)
+
+    monkeypatch.setattr(run_experiment.train_parkour, "main", fake_train)
+    monkeypatch.setattr(run_experiment.evaluate_model, "main", fake_eval)
+
+    run_experiment.main(
+        [
+            "--reward-profile",
+            "defense_v1",
+            "--train-eval",
+            "off",
+            "--eval-episodes",
+            "1",
+            "--wandb",
+            "off",
+        ]
+    )
+
+    assert len(eval_calls) == 1

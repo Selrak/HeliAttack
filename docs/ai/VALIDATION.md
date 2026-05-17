@@ -4,7 +4,7 @@ Run from repo root after installing `requirements.txt`:
 
 ```powershell
 python -m py_compile ha2_env.py ha2_replay.py extract_ha2_data.py ha2_constants.py
-python -m py_compile scripts/experiment_utils.py scripts/train_parkour.py scripts/evaluate_model.py scripts/watch_model.py scripts/run_experiment.py scripts/benchmark_vec_envs.py
+python -m py_compile scripts/runtime_config.py scripts/experiment_utils.py scripts/train_parkour.py scripts/evaluate_model.py scripts/watch_model.py scripts/play_human.py scripts/run_experiment.py scripts/benchmark_vec_envs.py
 python -m pytest
 python -m scripts.record_random_replay --steps 300 --out replays/smoke.jsonl
 python -m scripts.verify_replay replays/smoke.jsonl
@@ -42,6 +42,7 @@ Experiment smoke output:
 - `experiments/<created_experiment>/reports/eval_latest.json`
 - `experiments/<created_experiment>/reports/eval_best.json`
 - Evaluation reports should include visible enemy-bullet metrics, damage timing metrics, and defensive rates.
+- Evaluation reports should include top-level `reward_profile` and aggregated `reward_breakdown`; replay headers should include `reward_profile`, and replay step debug should include `reward_breakdown`.
 - Curriculum reports should include `policy_action_space_nvec`, `sim_action_space_nvec`, `policy_action_distributions`, and `full_action_distributions`.
 - M0 (`movement_no_boost_scripted_attack_direct`) replay `action` values should be full 6D simulator actions with `action[3] == 0` for every step.
 - `experiments/<created_experiment>/reports/timing/train_timing.json` and `.md`

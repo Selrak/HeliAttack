@@ -7,11 +7,19 @@ from pathlib import Path
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 import pygame
 
-from ha2_env import HeliAttack2Env
+from ha2_env import (
+    CONTROL_MODE_FULL,
+    CONTROL_MODE_MOVEMENT_NO_BOOST_SCRIPTED_ATTACK_DIRECT,
+    CONTROL_MODE_MOVEMENT_SCRIPTED_ATTACK_DIRECT,
+    HeliAttack2Env,
+    make_controlled_env,
+)
 from ha2_replay import JsonlReplayWriter
+from scripts.runtime_config import add_runtime_config_args, resolve_runtime_config, runtime_env_kwargs
 
 
-def action_from_keys(keys, env: HeliAttack2Env) -> list[int]:
+def action_from_keys(keys, env) -> list[int]:
+    base_env: HeliAttack2Env = env.unwrapped
     left = keys[pygame.K_LEFT] or keys[pygame.K_a] or keys[pygame.K_q]
     right = keys[pygame.K_RIGHT] or keys[pygame.K_d]
     move = 1
@@ -23,17 +31,23 @@ def action_from_keys(keys, env: HeliAttack2Env) -> list[int]:
     jump = keys[pygame.K_UP] or keys[pygame.K_w] or keys[pygame.K_z]
     duck = keys[pygame.K_DOWN] or keys[pygame.K_s]
     boost = keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]
+    control_mode = getattr(env, "control_mode", CONTROL_MODE_FULL)
+    if control_mode == CONTROL_MODE_MOVEMENT_NO_BOOST_SCRIPTED_ATTACK_DIRECT:
+        return [move, int(jump), int(duck)]
+    if control_mode == CONTROL_MODE_MOVEMENT_SCRIPTED_ATTACK_DIRECT:
+        return [move, int(jump), int(duck), int(boost)]
+
     try:
         mouse_x, mouse_y = pygame.mouse.get_pos()
         fire = pygame.mouse.get_pressed(num_buttons=3)[0]
     except pygame.error:
-        mouse_x = env.window_size[0] // 2
-        mouse_y = env.window_size[1] // 2
+        mouse_x = base_env.window_size[0] // 2
+        mouse_y = base_env.window_size[1] // 2
         fire = 0
-    mouse_x = max(0, min(mouse_x, env.window_size[0] - 1))
-    mouse_y = max(0, min(mouse_y, env.window_size[1] - 1))
-    cam_x, cam_y = env.get_camera()
-    aim_bin = env.aim_bin_for_world_target(mouse_x - cam_x, mouse_y - cam_y)
+    mouse_x = max(0, min(mouse_x, base_env.window_size[0] - 1))
+    mouse_y = max(0, min(mouse_y, base_env.window_size[1] - 1))
+    cam_x, cam_y = base_env.get_camera()
+    aim_bin = base_env.aim_bin_for_world_target(mouse_x - cam_x, mouse_y - cam_y)
     return [move, int(jump), int(duck), int(boost), aim_bin, int(fire)]
 
 
@@ -52,9 +66,20 @@ def main() -> None:
     parser.add_argument("--save-replay", type=Path)
     parser.add_argument("--record-gif", type=Path)
     parser.add_argument("--screenshot-dir", type=Path, default=Path("screenshots"))
+    add_runtime_config_args(
+        parser,
+        training_profile_default="legacy",
+        max_episode_steps_default=None,
+    )
     args = parser.parse_args()
+    runtime_config = resolve_runtime_config(args)
 
-    env = HeliAttack2Env(render_mode="human", auto_render=False)
+    env = make_controlled_env(
+        render_mode="human",
+        auto_render=False,
+        **runtime_env_kwargs(runtime_config),
+    )
+    base_env: HeliAttack2Env = env.unwrapped
     obs, _info = env.reset(seed=args.seed)
     writer = (
         JsonlReplayWriter(args.save_replay, env, args.seed, obs)
@@ -104,8 +129,8 @@ def main() -> None:
                         slow_motion = not slow_motion
                     elif event.key == pygame.K_F3:
                         collision_overlay = not collision_overlay
-                    elif event.key == pygame.K_F12 and env.window is not None:
-                        path = save_screenshot(env.window, args.screenshot_dir, screenshot_index)
+                    elif event.key == pygame.K_F12 and base_env.window is not None:
+                        path = save_screenshot(base_env.window, args.screenshot_dir, screenshot_index)
                         screenshot_index += 1
                         print(f"Saved screenshot: {path}")
                     elif event.key == pygame.K_r:
@@ -136,10 +161,10 @@ def main() -> None:
                 debug_lines=extra,
             )
 
-            if args.record_gif is not None and env.window is not None:
+            if args.record_gif is not None and base_env.window is not None:
                 import numpy as np
 
-                frame3d = pygame.surfarray.array3d(env.window)
+                frame3d = pygame.surfarray.array3d(base_env.window)
                 frames.append(np.transpose(frame3d, (1, 0, 2)))
 
             clock.tick(fps)

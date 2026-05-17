@@ -9,6 +9,12 @@ from scripts.experiment_utils import (
     resolve_model_path,
     unique_timestamped_path,
 )
+from scripts.runtime_config import (
+    add_runtime_config_args,
+    explicit_runtime_overrides,
+    resolve_runtime_config,
+    runtime_env_kwargs,
+)
 
 
 def default_model_path() -> Path:
@@ -39,15 +45,12 @@ def main(args_list: list[str] | None = None) -> None:
     parser.add_argument("--stochastic", action="store_true")
     parser.add_argument("--save-replay", nargs="?", const=DEFAULT_OUTPUT, default=None, type=str)
     parser.add_argument("--record-gif", nargs="?", const=DEFAULT_OUTPUT, default=None, type=str)
-    parser.add_argument("--training-profile", choices=["legacy", "combat_v1", "combat_bullets_v1"], default="combat_v1")
-    from ha2_env import CONTROL_MODE_FULL, CONTROL_MODES, REWARD_PROFILES
-    parser.add_argument("--control-mode", choices=sorted(CONTROL_MODES), default=CONTROL_MODE_FULL)
-    parser.add_argument("--reward-profile", choices=sorted(REWARD_PROFILES), default="combat_default")
-    parser.add_argument("--max-episode-steps", type=int, default=1800)
+    add_runtime_config_args(parser)
     args = parser.parse_args(args_list)
 
     effective_model_choice = "path" if args.model is not None else args.model_choice
     layout = None
+    config = {}
     if args.experiment is not None:
         experiment_path = Path(args.experiment)
         if not experiment_path.exists():
@@ -57,14 +60,9 @@ def main(args_list: list[str] | None = None) -> None:
             import json
             with open(layout.config_path, "r") as f:
                 config = json.load(f)
-                if "training_profile" in config:
-                    args.training_profile = config["training_profile"]
-                if "control_mode" in config:
-                    args.control_mode = config["control_mode"]
-                if "reward_profile" in config:
-                    args.reward_profile = config["reward_profile"]
-                if "control_mode" in config:
-                    args.control_mode = config["control_mode"]
+    runtime_config = resolve_runtime_config(args, config)
+    for field, (config_value, cli_value) in explicit_runtime_overrides(args, config, runtime_config).items():
+        print(f"Runtime override: {field} {config_value!r} -> {cli_value!r}")
     model_path = resolve_model_path(
         model=args.model,
         experiment=None if layout is None else layout.path,
@@ -85,10 +83,8 @@ def main(args_list: list[str] | None = None) -> None:
 
     env = make_controlled_env(
         render_mode="human",
-        control_mode=args.control_mode,
         auto_render=False,
-        training_profile=args.training_profile,
-        max_episode_steps=args.max_episode_steps,
+        **runtime_env_kwargs(runtime_config),
     )
     obs, _info = env.reset(seed=args.seed)
     writer = None
@@ -155,7 +151,7 @@ def main(args_list: list[str] | None = None) -> None:
                     info,
                     policy_action=policy_action,
                     full_action=full_action,
-                    control_mode=args.control_mode,
+                    control_mode=runtime_config.control_mode,
                 )
             env.render(
                 debug_overlay=True,

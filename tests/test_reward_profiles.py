@@ -4,6 +4,67 @@ import numpy as np
 import pytest
 
 from ha2_env import HeliAttack2Env
+from ha2_replay import JsonlReplayWriter, load_replay
+from scripts.train_parkour import EnvFactory
+
+
+def step_player_damage_reward(reward_profile: str) -> tuple[float, dict]:
+    env = HeliAttack2Env(training_profile="combat_v1", reward_profile=reward_profile)
+    try:
+        env.reset(seed=123)
+        left, top, right, bottom = env.unwrapped._player_hit_rect()
+        env.unwrapped._add_enemy_bullet(
+            (left + right) / 2.0,
+            (top + bottom) / 2.0,
+            rotation=0.0,
+            speed=0.0,
+        )
+        _obs, reward, _terminated, _truncated, info = env.step([1, 0, 0, 0, 0, 0])
+        return reward, info
+    finally:
+        env.close()
+
+
+def test_reward_profiles_change_actual_player_damage_reward():
+    default_reward, default_info = step_player_damage_reward("combat_default")
+    defense_reward, defense_info = step_player_damage_reward("defense_v1")
+
+    assert default_info["reward_breakdown"]["player_damage"] == pytest.approx(-1.0)
+    assert default_reward == pytest.approx(-0.99)
+    assert defense_info["reward_breakdown"]["player_damage"] == pytest.approx(-10.0)
+    assert defense_reward == pytest.approx(-10.0)
+    assert defense_reward != default_reward
+
+
+def test_env_factory_forwards_reward_profile():
+    pytest.importorskip("stable_baselines3")
+    env = EnvFactory(
+        rank=0,
+        seed=7,
+        training_profile="combat_v1",
+        max_episode_steps=40,
+        reward_profile="defense_v1",
+    )()
+    try:
+        assert env.unwrapped.reward_profile == "defense_v1"
+    finally:
+        env.close()
+
+
+def test_replay_records_reward_profile_and_breakdown(tmp_path):
+    path = tmp_path / "defense_replay.jsonl"
+    env = HeliAttack2Env(training_profile="combat_v1", reward_profile="defense_v1")
+    obs, _info = env.reset(seed=5)
+    with JsonlReplayWriter(path, env, 5, obs) as writer:
+        obs, reward, terminated, truncated, info = env.step([1, 0, 0, 0, 0, 0])
+        writer.append_step(env, [1, 0, 0, 0, 0, 0], obs, reward, terminated, truncated, info)
+    env.close()
+
+    header, steps = load_replay(path)
+    assert header["reward_profile"] == "defense_v1"
+    assert steps[0]["debug"]["reward_profile"] == "defense_v1"
+    assert "reward_breakdown" in steps[0]["debug"]
+    assert steps[0]["debug"]["reward_breakdown"]["living"] == 0.0
 
 def test_combat_default_reward_profile():
     env = HeliAttack2Env(training_profile="combat_v1", reward_profile="combat_default")

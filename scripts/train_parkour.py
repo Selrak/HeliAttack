@@ -14,17 +14,20 @@ except ImportError:
     pass
 
 from ha2_env import (
-    CONTROL_MODE_FULL,
-    CONTROL_MODES,
     FULL_SIM_ACTION_NVEC,
     make_controlled_env,
-    REWARD_PROFILES,
 )
 from scripts.experiment_utils import (
     create_experiment_layout,
     git_info_text,
     write_json_file,
     write_text_file,
+)
+from scripts.runtime_config import (
+    RuntimeConfig,
+    add_runtime_config_args,
+    resolve_runtime_config,
+    runtime_env_kwargs,
 )
 
 
@@ -46,7 +49,7 @@ class EnvFactory:
     rank: int
     seed: int
     training_profile: str
-    max_episode_steps: int
+    max_episode_steps: int | None
     control_mode: str = "full"
     reward_profile: str = "combat_default"
 
@@ -55,10 +58,14 @@ class EnvFactory:
 
         env = make_controlled_env(
             render_mode=None,
-            control_mode=self.control_mode,
-            training_profile=self.training_profile,
-            reward_profile=self.reward_profile,
-            max_episode_steps=self.max_episode_steps,
+            **runtime_env_kwargs(
+                RuntimeConfig(
+                    training_profile=self.training_profile,
+                    control_mode=self.control_mode,
+                    reward_profile=self.reward_profile,
+                    max_episode_steps=self.max_episode_steps,
+                )
+            ),
         )
         env.reset(seed=self.seed + self.rank)
         return Monitor(env)
@@ -114,10 +121,7 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
     parser.add_argument("--device", default="auto")
     parser.add_argument("--tensorboard-log", type=Path, default=None)
     parser.add_argument("--wandb", choices=["off", "on"], default="off")
-    parser.add_argument("--training-profile", choices=["legacy", "combat_v1", "combat_bullets_v1"], default="combat_v1")
-    parser.add_argument("--reward-profile", choices=sorted(REWARD_PROFILES), default="combat_default")
-    parser.add_argument("--control-mode", choices=sorted(CONTROL_MODES), default=CONTROL_MODE_FULL)
-    parser.add_argument("--max-episode-steps", type=int, default=1800)
+    add_runtime_config_args(parser)
     parser.add_argument("--experiments-root", type=Path, default=Path("experiments"))
     parser.add_argument("--experiment-dir", type=Path, default=None)
     parser.add_argument("--experiment-name", type=str, default=None)
@@ -128,6 +132,7 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
     parser.add_argument("--timing-profile", choices=["on", "off"], default="off")
     parser.add_argument("--torch-num-threads", type=int, default=None)
     args = parser.parse_args(args_list)
+    runtime_config = resolve_runtime_config(args)
 
     # Compute effective eval_freq
     effective_eval_freq = args.eval_freq
@@ -160,7 +165,7 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         experiments_root=args.experiments_root,
         experiment_dir=args.experiment_dir,
         experiment_name=args.experiment_name,
-        training_profile=args.training_profile,
+        training_profile=runtime_config.training_profile,
         total_timesteps=args.total_timesteps,
         now=datetime.now(),
     )
@@ -181,10 +186,10 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         "eval_vec_env": args.eval_vec_env,
         "effective_eval_vec_env": effective_eval_vec_env(args.vec_env, args.eval_vec_env),
         "device": args.device,
-        "training_profile": args.training_profile,
-        "reward_profile": args.reward_profile,
-        "control_mode": args.control_mode,
-        "max_episode_steps": int(args.max_episode_steps),
+        "training_profile": runtime_config.training_profile,
+        "reward_profile": runtime_config.reward_profile,
+        "control_mode": runtime_config.control_mode,
+        "max_episode_steps": runtime_config.max_episode_steps,
         "wandb": args.wandb,
         "tensorboard_log": str(tensorboard_log),
         "mirror_root_models": bool(args.mirror_root_models),
@@ -201,7 +206,7 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
             total_requested_timesteps=args.total_timesteps,
             n_envs=args.n_envs,
             vec_env=args.vec_env,
-            training_profile=args.training_profile,
+            training_profile=runtime_config.training_profile,
             net_arch=args.net_arch or "default",
             torch_num_threads=effective_torch_threads,
             omp_num_threads=os.environ.get("OMP_NUM_THREADS"),
@@ -212,9 +217,10 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         vec_env=args.vec_env,
         n_envs=args.n_envs,
         seed=args.seed,
-        training_profile=args.training_profile,
-        control_mode=args.control_mode,
-        max_episode_steps=args.max_episode_steps,
+        training_profile=runtime_config.training_profile,
+        control_mode=runtime_config.control_mode,
+        reward_profile=runtime_config.reward_profile,
+        max_episode_steps=runtime_config.max_episode_steps,
         monitor_cls=Monitor,
         dummy_vec_env_cls=DummyVecEnv,
         subproc_vec_env_cls=SubprocVecEnv,
@@ -233,9 +239,10 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
             vec_env=eval_env_name,
             n_envs=1,
             seed=args.seed + 10_000,
-            training_profile=args.training_profile,
-            control_mode=args.control_mode,
-            max_episode_steps=args.max_episode_steps,
+            training_profile=runtime_config.training_profile,
+            control_mode=runtime_config.control_mode,
+            reward_profile=runtime_config.reward_profile,
+            max_episode_steps=runtime_config.max_episode_steps,
             monitor_cls=Monitor,
             dummy_vec_env_cls=DummyVecEnv,
             subproc_vec_env_cls=SubprocVecEnv,
@@ -345,8 +352,9 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         "# HA2 Experiment Summary",
         "",
         f"- experiment: `{layout.path}`",
-        f"- training_profile: `{args.training_profile}`",
-        f"- control_mode: `{args.control_mode}`",
+        f"- training_profile: `{runtime_config.training_profile}`",
+        f"- reward_profile: `{runtime_config.reward_profile}`",
+        f"- control_mode: `{runtime_config.control_mode}`",
         f"- policy_action_space_nvec: `{config.get('policy_action_space_nvec')}`",
         f"- sim_action_space_nvec: `{config.get('sim_action_space_nvec')}`",
         f"- total_timesteps: `{args.total_timesteps}`",
