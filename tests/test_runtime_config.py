@@ -443,8 +443,12 @@ def test_train_parkour_resume_writes_lineage_and_uses_no_reset_default(tmp_path,
     )
 
     config = json.loads(layout.config_path.read_text(encoding="utf-8"))
+    resolved = json.loads((layout.path / "resolved_config.json").read_text(encoding="utf-8"))
     summary = layout.summary_path.read_text(encoding="utf-8")
     assert layout.path != parent
+    assert isinstance(json.loads((layout.path / "argv.json").read_text(encoding="utf-8")), list)
+    assert "scripts.train_parkour" in (layout.path / "command.txt").read_text(encoding="utf-8")
+    assert resolved["experiment_label"] == "child_resume"
     assert config["resume_from"] == str(parent_model)
     assert config["parent_experiment_dir"] == str(parent)
     assert config["parent_training_profile"] == "combat_bullets_v1"
@@ -582,6 +586,73 @@ def test_run_experiment_forwards_resume_args(tmp_path, monkeypatch):
 
     assert captured_train_args[captured_train_args.index("--resume-from") + 1] == str(parent_model)
     assert "--no-reset-num-timesteps" in captured_train_args
+    assert (exp_dir / "argv.json").exists()
+    assert (exp_dir / "command.txt").exists()
+    assert (exp_dir / "train_argv.json").exists()
+    assert (exp_dir / "train_command.txt").exists()
+    assert (exp_dir / "eval_latest_argv.json").exists()
+    assert (exp_dir / "eval_latest_command.txt").exists()
+    resolved = json.loads((exp_dir / "resolved_config.json").read_text(encoding="utf-8"))
+    assert resolved["experiment_label"] == "resume_orchestration"
+    assert resolved["resume_from"] == str(parent_model)
+
+
+def test_run_experiment_label_alias_and_conflict(tmp_path, monkeypatch):
+    from scripts import run_experiment
+    from scripts.experiment_utils import ExperimentLayout, write_json_file, write_text_file
+
+    monkeypatch.chdir(tmp_path)
+    exp_dir = Path("experiments") / "alias_run"
+
+    def fake_train_main(args_list):
+        assert args_list[args_list.index("--experiment-name") + 1] == "alias_run"
+        layout = ExperimentLayout(Path("experiments"), exp_dir)
+        layout.ensure_directories()
+        write_json_file(
+            layout.config_path,
+            {
+                "training_profile": "combat_v1",
+                "control_mode": "full",
+                "reward_profile": "combat_default",
+                "pressure_profile": "normal",
+            },
+        )
+        write_text_file(layout.summary_path, "# Summary\n", allow_overwrite=True)
+        write_text_file(layout.git_info_path, "git unavailable\n", allow_overwrite=True)
+        write_text_file(layout.models_dir / "latest.zip", "model", allow_overwrite=True)
+        return layout
+
+    def fake_eval_main(_args_list):
+        report_path = exp_dir / "reports" / "eval_latest.json"
+        report_path.write_text(
+            json.dumps(
+                {
+                    "training_profile": "combat_v1",
+                    "control_mode": "full",
+                    "reward_profile": "combat_default",
+                    "pressure_profile": "normal",
+                    "metrics": {
+                        "reward": {"mean": 0.0},
+                        "length": {"mean": 1.0},
+                        "heli_kills": {"mean": 0.0},
+                        "player_damage": {"mean": 0.0},
+                        "final_score": {"mean": 0.0},
+                    },
+                    "rates": {"hit_rate": 0.0, "death_rate": 0.0, "timeout_rate": 0.0},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(run_experiment.train_parkour, "main", fake_train_main)
+    monkeypatch.setattr(run_experiment.evaluate_model, "main", fake_eval_main)
+
+    run_experiment.main(["--label", "alias_run", "--train-eval", "off", "--eval-episodes", "1"])
+    resolved = json.loads((exp_dir / "resolved_config.json").read_text(encoding="utf-8"))
+    assert resolved["experiment_label"] == "alias_run"
+
+    with pytest.raises(SystemExit, match="aliases"):
+        run_experiment.main(["--label", "a", "--experiment-name", "b"])
 
 
 def test_run_experiment_rejects_net_arch_with_resume(tmp_path):
@@ -632,12 +703,18 @@ def test_run_experiment_pair_forwards_pressure_profiles(tmp_path, monkeypatch):
 
     def fake_run_job(name, args, env, log_dir):
         calls.append((name, list(args)))
+        command_path = Path(log_dir) / f"{name}_command.txt"
+        argv_path = Path(log_dir) / f"{name}_argv.json"
+        command_path.write_text("fake command\n", encoding="utf-8")
+        argv_path.write_text("[]\n", encoding="utf-8")
         return run_experiment_pair.JobResult(
             command=[sys.executable, "-m", "scripts.run_experiment", *args],
             stdout_log=str(Path(log_dir) / f"{name}.stdout.log"),
             stderr_log=str(Path(log_dir) / f"{name}.stderr.log"),
             exit_code=0,
             experiment_path=str(tmp_path / name),
+            command_path=str(command_path),
+            argv_path=str(argv_path),
         )
 
     monkeypatch.chdir(tmp_path)
@@ -668,6 +745,11 @@ def test_run_experiment_pair_forwards_pressure_profiles(tmp_path, monkeypatch):
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     assert summary["_metadata"]["pressure_profile_a"] == "enemy_fire_slow_2x"
     assert summary["_metadata"]["pressure_profile_b"] == "enemy_fire_slow_4x"
+    pair_dir = summary_path.parent
+    assert (pair_dir / "argv.json").exists()
+    assert (pair_dir / "command.txt").exists()
+    assert (pair_dir / "resolved_config.json").exists()
+    assert (pair_dir / "pair_invocation_metadata.json").exists()
 
 
 def test_run_experiment_pair_forwards_resume_paths_and_reset_overrides(tmp_path, monkeypatch):
@@ -683,12 +765,18 @@ def test_run_experiment_pair_forwards_resume_paths_and_reset_overrides(tmp_path,
 
     def fake_run_job(name, args, env, log_dir):
         calls.append((name, list(args)))
+        command_path = Path(log_dir) / f"{name}_command.txt"
+        argv_path = Path(log_dir) / f"{name}_argv.json"
+        command_path.write_text("fake command\n", encoding="utf-8")
+        argv_path.write_text("[]\n", encoding="utf-8")
         return run_experiment_pair.JobResult(
             command=[sys.executable, "-m", "scripts.run_experiment", *args],
             stdout_log=str(Path(log_dir) / f"{name}.stdout.log"),
             stderr_log=str(Path(log_dir) / f"{name}.stderr.log"),
             exit_code=0,
             experiment_path=str(tmp_path / name),
+            command_path=str(command_path),
+            argv_path=str(argv_path),
         )
 
     monkeypatch.chdir(tmp_path)
@@ -728,3 +816,5 @@ def test_run_experiment_pair_forwards_resume_paths_and_reset_overrides(tmp_path,
     assert summary["_metadata"]["resume_a"]["fine_tune_timesteps"] == 7
     assert summary["_metadata"]["resume_b"]["resume_from"] == str(parent_b)
     assert summary["_metadata"]["resume_b"]["reset_num_timesteps"] is True
+    assert summary["sequential"]["job_a"]["command_path"]
+    assert summary["sequential"]["job_a"]["argv_path"]

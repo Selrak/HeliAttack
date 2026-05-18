@@ -125,10 +125,16 @@ def test_dry_run_writes_config_manifest_and_bundle_without_subprocess(tmp_path, 
     assert len(manifest["jobs"]) == 2
     assert all(job["dry_run"] for job in manifest["jobs"].values())
     assert (matrix_dir / "matrix_summary.json").exists()
+    assert (matrix_dir / "argv.json").exists()
+    assert (matrix_dir / "command.txt").exists()
+    assert (matrix_dir / "resolved_config.json").exists()
     bundle = next(matrix_dir.glob("*_bundle.zip"))
     with zipfile.ZipFile(bundle) as zf:
         names = set(zf.namelist())
     assert "matrix_config.json" in names
+    assert "resolved_config.json" in names
+    assert "argv.json" in names
+    assert "command.txt" in names
     assert "matrix_manifest.json" in names
     assert "matrix_summary.md" in names
 
@@ -223,6 +229,9 @@ def test_real_matrix_with_mocked_subprocess_copies_reports_summarizes_and_sets_e
     assert "-m" in seen_commands[0]
     assert "scripts.evaluate_model" in seen_commands[0]
     summary = json.loads((matrix_dir / "matrix_summary.json").read_text(encoding="utf-8"))
+    assert summary["matrix_duration_seconds"] >= 0
+    assert summary["job_count"] == 1
+    assert summary["succeeded_count"] == 1
     row = summary["rows"][0]
     assert row["mean_reward"] == 12.0
     assert row["visible_bullet_hit_rate"] == 0.1
@@ -236,6 +245,9 @@ def test_real_matrix_with_mocked_subprocess_copies_reports_summarizes_and_sets_e
         names = set(zf.namelist())
     assert f"jobs/{job_dir.name}/eval_report.json" in names
     assert f"jobs/{job_dir.name}/metadata.json" in names
+    assert "command.txt" in names
+    assert "argv.json" in names
+    assert "resolved_config.json" in names
 
 
 def test_save_replays_is_opt_in(tmp_path):
@@ -317,6 +329,7 @@ def test_fail_fast_skips_pending_jobs_without_hanging(tmp_path, monkeypatch):
 
     manifest = json.loads((matrix_dir / "matrix_manifest.json").read_text(encoding="utf-8"))
     jobs = list(manifest["jobs"].values())
+    assert jobs[0]["env_updates"]["HA2_TORCH_NUM_THREADS"] == "1"
     assert jobs[0]["exit_code"] == 1
     assert jobs[1]["skipped"] is True
     assert jobs[1]["skip_reason"] == "fail_fast"

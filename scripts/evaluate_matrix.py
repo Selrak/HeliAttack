@@ -17,6 +17,13 @@ from pathlib import Path
 from typing import Any
 
 from scripts.experiment_utils import resolve_model_path, write_json_file, write_text_file
+from scripts.invocation_metadata import (
+    argv_for_module,
+    capture_invocation_metadata,
+    reconstruct_command_for_display,
+    write_invocation_files,
+    write_resolved_config,
+)
 from scripts.runtime_config import parse_human_count
 
 
@@ -244,6 +251,7 @@ def build_jobs(
                 "stdout_log_path": str(job_dir / "stdout.log"),
                 "stderr_log_path": str(job_dir / "stderr.log"),
                 "command_path": str(job_dir / "command.txt"),
+                "env_updates": env_updates,
                 "exit_code": None,
                 "start_time": None,
                 "end_time": None,
@@ -278,7 +286,7 @@ def prepare_output_tree(matrix_dir: Path, jobs: list[EvalJob]) -> None:
     (matrix_dir / "jobs").mkdir(parents=True, exist_ok=True)
     for job in jobs:
         job.output_dir.mkdir(parents=True, exist_ok=True)
-        write_text_file(job.command_path, " ".join(job.command), allow_overwrite=True)
+        write_text_file(job.command_path, reconstruct_command_for_display(job.command) + "\n", allow_overwrite=True)
         if job.parent_config_path is not None:
             shutil.copy2(job.parent_config_path, job.output_dir / "parent_config.json")
         write_json_file(job.metadata_path, job.metadata, allow_overwrite=True)
@@ -471,15 +479,34 @@ def summary_row(job: EvalJob) -> dict[str, Any]:
     }
 
 
-def write_summaries(matrix_dir: Path, matrix_id: str, jobs: list[EvalJob]) -> list[dict[str, Any]]:
+def write_summaries(
+    matrix_dir: Path,
+    matrix_id: str,
+    jobs: list[EvalJob],
+    matrix_stats: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     rows = [summary_row(job) for job in jobs]
-    write_json_file(matrix_dir / "matrix_summary.json", {"matrix_id": matrix_id, "rows": rows}, allow_overwrite=True)
+    matrix_stats = matrix_stats or {}
+    write_json_file(
+        matrix_dir / "matrix_summary.json",
+        {"matrix_id": matrix_id, **matrix_stats, "rows": rows},
+        allow_overwrite=True,
+    )
     with (matrix_dir / "matrix_summary.csv").open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=SUMMARY_COLUMNS)
         writer.writeheader()
         writer.writerows(rows)
     lines = [
         f"# Evaluation Matrix {matrix_id}",
+        "",
+        f"- Started: `{matrix_stats.get('matrix_start_time', 'n/a')}`",
+        f"- Ended: `{matrix_stats.get('matrix_end_time', 'n/a')}`",
+        f"- Duration seconds: `{matrix_stats.get('matrix_duration_seconds', 'n/a')}`",
+        f"- Jobs total/succeeded/failed/skipped: `{matrix_stats.get('job_count', 'n/a')}` / `{matrix_stats.get('succeeded_count', 'n/a')}` / `{matrix_stats.get('failed_count', 'n/a')}` / `{matrix_stats.get('skipped_count', 'n/a')}`",
+        "- Command: `command.txt`",
+        "- Raw argv: `argv.json`",
+        "- Resolved config: `resolved_config.json`",
+        "- Note: `command.txt` is reconstructed from argv; original shell quoting is not recoverable.",
         "",
         "Each row maps one model/pressure evaluation to an unambiguous `eval_id`.",
         "",
@@ -534,6 +561,7 @@ def write_matrix_files(
         "jobs": {job.eval_id: job.metadata for job in jobs},
     }
     write_json_file(matrix_dir / "matrix_config.json", config, allow_overwrite=True)
+    write_resolved_config(matrix_dir, config)
     write_json_file(matrix_dir / "matrix_manifest.json", manifest, allow_overwrite=True)
 
 
@@ -571,6 +599,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(args_list: list[str] | None = None) -> Path:
+    invocation_argv = argv_for_module("scripts.evaluate_matrix", args_list)
     parser = build_parser()
     args = parser.parse_args(args_list)
     validate_entries(args.entry)
@@ -581,8 +610,17 @@ def main(args_list: list[str] | None = None) -> Path:
     if not args.pressure_profiles:
         raise SystemExit("--pressure-profiles must contain at least one profile")
 
+    matrix_start_dt = datetime.now()
+    matrix_start_tick = time.perf_counter()
     matrix_id, matrix_dir = unique_matrix_dir(args.output_root, args.matrix_name)
     matrix_dir.mkdir(parents=True, exist_ok=False)
+    invocation_metadata = capture_invocation_metadata(
+        "scripts.evaluate_matrix",
+        invocation_argv,
+        Path.cwd(),
+        repo_root=Path(__file__).resolve().parents[1],
+    )
+    write_invocation_files(matrix_dir, invocation_metadata)
     overrides = {
         "training_profile": args.training_profile,
         "control_mode": args.control_mode,
@@ -631,7 +669,18 @@ def main(args_list: list[str] | None = None) -> Path:
         pressure_profiles=args.pressure_profiles,
         jobs=completed,
     )
-    write_summaries(matrix_dir, matrix_id, completed)
+    matrix_end_dt = datetime.now()
+    matrix_stats = {
+        "matrix_start_time": matrix_start_dt.isoformat(timespec="seconds"),
+        "matrix_end_time": matrix_end_dt.isoformat(timespec="seconds"),
+        "matrix_duration_seconds": time.perf_counter() - matrix_start_tick,
+        "job_count": len(completed),
+        "succeeded_count": sum(1 for job in completed if job.metadata.get("exit_code") == 0),
+        "failed_count": sum(1 for job in completed if job.metadata.get("exit_code") not in (0, None)),
+        "skipped_count": sum(1 for job in completed if job.metadata.get("skipped")),
+        "dry_run_count": sum(1 for job in completed if job.metadata.get("dry_run")),
+    }
+    write_summaries(matrix_dir, matrix_id, completed, matrix_stats=matrix_stats)
     bundle_path = create_bundle(matrix_dir, matrix_id)
     print(f"Bundle: {bundle_path}")
     return matrix_dir

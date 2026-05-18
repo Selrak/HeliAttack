@@ -4,7 +4,7 @@ Run from repo root after installing `requirements.txt`. Use the project venv (`.
 
 ```powershell
 python -m py_compile ha2_env.py ha2_replay.py extract_ha2_data.py ha2_constants.py
-python -m py_compile scripts/runtime_config.py scripts/experiment_utils.py scripts/train_parkour.py scripts/evaluate_model.py scripts/evaluate_matrix.py scripts/watch_model.py scripts/play_human.py scripts/play_replay.py scripts/run_experiment.py scripts/run_experiment_pair.py scripts/benchmark_vec_envs.py
+python -m py_compile scripts/runtime_config.py scripts/experiment_utils.py scripts/invocation_metadata.py scripts/train_parkour.py scripts/evaluate_model.py scripts/evaluate_matrix.py scripts/watch_model.py scripts/play_human.py scripts/play_replay.py scripts/run_experiment.py scripts/run_experiment_pair.py scripts/benchmark_vec_envs.py
 python -m pytest
 python -m scripts.record_random_replay --steps 300 --out replays/smoke.jsonl
 python -m scripts.verify_replay replays/smoke.jsonl
@@ -30,6 +30,7 @@ python -m scripts.train_parkour --total-timesteps 1024 --n-envs 2 --vec-env subp
 python -m scripts.benchmark_vec_envs --mode train-only --total-timesteps 2048 --repeats 1 --vec-envs dummy subproc --n-envs 1 2 --wandb off --device cpu
 python -m scripts.benchmark_vec_envs --mode workflow --total-timesteps 2048 --repeats 1 --vec-envs dummy subproc --n-envs 1 2 --eval-vec-env same --wandb off --device cpu
 python -m scripts.evaluate_matrix --matrix-name smoke_matrix --entry "label=M0;experiment=experiments/<m0_experiment>;model=latest" --entry "label=M1;experiment=experiments/<m1_experiment>;model=best" --pressure-profiles enemy_fire_slow_4x,enemy_fire_slow_2x,normal --episodes 1 --max-episode-steps 200 --max-parallel 2 --threads-per-job 1 --dry-run
+python -m scripts.run_experiment --training-profile combat_bullets_v1 --control-mode movement_scripted_attack_direct --reward-profile defense_v1 --pressure-profile normal --total-timesteps 1024 --n-envs 1 --vec-env dummy --wandb off --train-eval off --eval-episodes 1 --max-episode-steps 200 --timing-profile on --label invocation_smoke_label_alias
 ```
 
 Current Heli damage check: `reports/parity_traces/heli_shoots_hero_240_summary.txt` should show `initial_player_health=100`, `final_player_health=90`, `enemy_bullet_hits=1`, and `first_enemy_damage_frame=240`.
@@ -56,6 +57,11 @@ Experiment smoke output:
 - `experiments/<created_experiment>/replays/best_eval_ep0.jsonl`
 - `experiments/<created_experiment>/tensorboard/`
 - `experiments/<created_experiment>/<created_experiment>_diagnostic_bundle.zip`
+- `experiments/<created_experiment>/argv.json`
+- `experiments/<created_experiment>/command.txt`
+- `experiments/<created_experiment>/resolved_config.json`
+- `experiments/<created_experiment>/invocation_metadata.json`
+- Orchestrated runs also include child metadata such as `train_argv.json`, `train_command.txt`, and `eval_latest_command.txt`.
 
 Manual GUI checks:
 

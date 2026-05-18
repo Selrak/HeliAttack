@@ -1466,3 +1466,13 @@ Add a cross-platform `scripts.evaluate_matrix` runner for model/pressure evaluat
 - Fixed `--fail-fast` so queued jobs are marked skipped instead of leaving `pending` non-empty.
 - Changed replay saving default to off; `--save-replays` is now opt-in for large matrices.
 - Validation: py_compile passed; `tests/test_evaluate_matrix.py` passed (`7 passed`); full pytest passed (`113 passed, 3 warnings`); dry-run confirmed `save_replays=false`.
+
+## 2026-05-18 Europe/Paris - Invocation Metadata and Resolved Configs
+
+- Added shared invocation metadata writing for `train_parkour`, `run_experiment`, `run_experiment_pair`, and `evaluate_matrix`.
+- New outputs include `argv.json`, `command.txt`, `invocation_metadata.json`, and `resolved_config.json`; orchestrated runs also write child train/eval command files.
+- Implemented `run_experiment --label` as an alias for `--experiment-name`; conflicting values fail.
+- Validation passed: py_compile, full pytest (`114 passed, 3 warnings`), smoke runs `experiments/invocation_smoke`, `experiments/invocation_smoke_label_alias`, and dry-run matrix `experiments/eval_matrices/invocation_matrix_smoke_20260518_175924`.
+- Limitation: `command.txt` is reconstructed from argv and does not preserve byte-exact original shell quoting; use `argv.json` as authoritative.
+- Follow-up: pair and matrix Markdown summaries now repeat the same command reconstruction limitation.
+- Suggested next step: inspect the new metadata files in the smoke outputs before relying on them for long experiment chains.

@@ -7,6 +7,12 @@ import zipfile
 
 from scripts import train_parkour
 from scripts import evaluate_model
+from scripts.invocation_metadata import (
+    argv_for_module,
+    capture_invocation_metadata,
+    write_invocation_files,
+    write_resolved_config,
+)
 from scripts.runtime_config import (
     add_runtime_config_args,
     resolve_runtime_config,
@@ -14,6 +20,7 @@ from scripts.runtime_config import (
 )
 
 def main(args_list: list[str] | None = None) -> None:
+    invocation_argv = argv_for_module("scripts.run_experiment", args_list)
     parser = argparse.ArgumentParser(description="Orchestrate HA2 PPO training and evaluation.")
     parser.add_argument("--total-timesteps", type=parse_human_count, default=10_000)
     parser.add_argument("--seed", type=int, default=0)
@@ -27,7 +34,8 @@ def main(args_list: list[str] | None = None) -> None:
     parser.add_argument("--device", default="auto")
     parser.add_argument("--wandb", choices=["off", "on"], default="off")
     parser.add_argument("--eval-episodes", type=parse_human_count, default=5)
-    parser.add_argument("--experiment-name", type=str, default=None)
+    parser.add_argument("--experiment-name", type=str, default=None, help="Single-run experiment label/name.")
+    parser.add_argument("--label", type=str, default=None, help="Alias for --experiment-name.")
     parser.add_argument("--save-replays", action="store_true")
     add_runtime_config_args(parser)
     parser.add_argument("--watch", action="store_true")
@@ -38,6 +46,10 @@ def main(args_list: list[str] | None = None) -> None:
     parser.add_argument("--timing-profile", choices=["on", "off"], default="off")
     parser.add_argument("--torch-num-threads", type=int, default=None)
     args = parser.parse_args(args_list)
+    if args.label is not None and args.experiment_name is not None and args.label != args.experiment_name:
+        raise SystemExit("--label and --experiment-name are aliases and must match when both are provided.")
+    if args.experiment_name is None:
+        args.experiment_name = args.label
     runtime_config = resolve_runtime_config(args)
     effective_reset_num_timesteps = (
         bool(args.reset_num_timesteps)
@@ -86,6 +98,47 @@ def main(args_list: list[str] | None = None) -> None:
     train_start = time.perf_counter()
     layout = train_parkour.main(train_args)
     train_duration = time.perf_counter() - train_start
+    repo_root = Path(__file__).resolve().parents[1]
+    top_metadata = capture_invocation_metadata(
+        "scripts.run_experiment",
+        invocation_argv,
+        Path.cwd(),
+        repo_root=repo_root,
+    )
+    train_metadata = capture_invocation_metadata(
+        "scripts.train_parkour",
+        argv_for_module("scripts.train_parkour", train_args),
+        Path.cwd(),
+        repo_root=repo_root,
+    )
+    write_invocation_files(layout.path, top_metadata)
+    write_invocation_files(layout.path, train_metadata, prefix="train_")
+    try:
+        existing_config = json.loads(layout.config_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        existing_config = {}
+    resolved_config = {
+        **existing_config,
+        "experiment_label": args.experiment_name or layout.path.name,
+        "experiment_name": args.experiment_name,
+        "run_experiment_label_alias": args.label,
+        "orchestrator": "scripts.run_experiment",
+        "top_level_command_path": "command.txt",
+        "top_level_argv_path": "argv.json",
+        "train_command_path": "train_command.txt",
+        "train_argv_path": "train_argv.json",
+        "eval_best_command_path": "eval_best_command.txt",
+        "eval_best_argv_path": "eval_best_argv.json",
+        "eval_latest_command_path": "eval_latest_command.txt",
+        "eval_latest_argv_path": "eval_latest_argv.json",
+        "eval_episodes": int(args.eval_episodes),
+        "save_replays": bool(args.save_replays),
+        "watch": bool(args.watch),
+        "report_best_path": str(layout.report_path("best")),
+        "report_latest_path": str(layout.report_path("latest")),
+        "replays_dir": str(layout.replays_dir),
+    }
+    write_resolved_config(layout.path, resolved_config)
 
     print("\n=== Phase 2: Evaluation ===")
     eval_durations = {}
@@ -104,6 +157,13 @@ def main(args_list: list[str] | None = None) -> None:
         ]
         if args.save_replays:
             eval_args.append("--save-replays")
+        eval_metadata = capture_invocation_metadata(
+            "scripts.evaluate_model",
+            argv_for_module("scripts.evaluate_model", eval_args),
+            Path.cwd(),
+            repo_root=Path(__file__).resolve().parents[1],
+        )
+        write_invocation_files(layout.path, eval_metadata, prefix=f"eval_{model_choice}_")
         print(f"\n--- Evaluating {model_choice} model ---")
         start = time.perf_counter()
         evaluate_model.main(eval_args)
@@ -219,6 +279,17 @@ def main(args_list: list[str] | None = None) -> None:
         if best_replay.exists():
             summary_content += f"Play best replay:\n```text\npython -m scripts.play_replay {best_replay}\n```\n"
 
+        summary_content += (
+            "\n### Reproducibility\n\n"
+            "- Command: `command.txt`\n"
+            "- Raw argv: `argv.json`\n"
+            "- Resolved config: `resolved_config.json`\n"
+            "- Train command: `train_command.txt`\n"
+            "- Train argv: `train_argv.json`\n"
+            "- Eval command files: `eval_best_command.txt`, `eval_latest_command.txt` when those evals run\n"
+            "- Note: command files are reconstructed from argv; original shell quoting is not recoverable.\n"
+        )
+
         with open(summary_path, "w") as f:
             f.write(summary_content)
         print(f"Updated {summary_path}")
@@ -256,6 +327,19 @@ def main(args_list: list[str] | None = None) -> None:
     
     files_to_bundle = [
         layout.path / "config.json",
+        layout.path / "resolved_config.json",
+        layout.path / "argv.json",
+        layout.path / "command.txt",
+        layout.path / "invocation_metadata.json",
+        layout.path / "train_argv.json",
+        layout.path / "train_command.txt",
+        layout.path / "train_invocation_metadata.json",
+        layout.path / "eval_best_argv.json",
+        layout.path / "eval_best_command.txt",
+        layout.path / "eval_best_invocation_metadata.json",
+        layout.path / "eval_latest_argv.json",
+        layout.path / "eval_latest_command.txt",
+        layout.path / "eval_latest_invocation_metadata.json",
         layout.path / "git_info.txt",
         layout.path / "summary.md",
         layout.path / "reports" / "eval_best.json",

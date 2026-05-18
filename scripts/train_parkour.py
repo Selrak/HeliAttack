@@ -26,6 +26,12 @@ from scripts.experiment_utils import (
     write_json_file,
     write_text_file,
 )
+from scripts.invocation_metadata import (
+    argv_for_module,
+    capture_invocation_metadata,
+    write_invocation_files,
+    write_resolved_config,
+)
 from scripts.runtime_config import (
     RuntimeConfig,
     add_runtime_config_args,
@@ -150,6 +156,7 @@ def validate_resume_compatibility(model, env, runtime_config: RuntimeConfig) -> 
 
 
 def main(args_list: list[str] | None = None) -> ExperimentLayout:
+    invocation_argv = argv_for_module("scripts.train_parkour", args_list)
     parser = argparse.ArgumentParser(description="Minimal HA2 parkour PPO training.")
     parser.add_argument("--total-timesteps", type=parse_human_count, default=10_000)
     parser.add_argument("--seed", type=int, default=0)
@@ -261,6 +268,13 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
     }
     write_json_file(layout.config_path, config)
     write_text_file(layout.git_info_path, git_info_text(repo_root), allow_overwrite=True)
+    invocation_metadata = capture_invocation_metadata(
+        "scripts.train_parkour",
+        invocation_argv,
+        Path.cwd(),
+        repo_root=repo_root,
+    )
+    write_invocation_files(layout.path, invocation_metadata)
 
     training_timing = None
     if args.timing_profile == "on":
@@ -292,7 +306,19 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
     )
     config["policy_action_space_nvec"] = [int(v) for v in env.action_space.nvec.tolist()]
     config["sim_action_space_nvec"] = FULL_SIM_ACTION_NVEC.copy()
+    config["experiment_label"] = args.experiment_name or layout.path.name
+    config["experiment_name"] = args.experiment_name
+    config["effective_eval_freq"] = int(effective_eval_freq)
+    config["eval_freq_timesteps"] = int(args.eval_freq_timesteps) if args.eval_freq_timesteps is not None else None
+    config["timing_profile"] = args.timing_profile
+    config["torch_num_threads"] = effective_torch_threads
+    config["model_latest_path"] = str(layout.models_dir / "latest.zip")
+    config["model_best_path"] = str(layout.models_dir / "best.zip")
+    config["checkpoints_dir"] = str(layout.checkpoints_dir)
+    config["reports_dir"] = str(layout.reports_dir)
+    config["replays_dir"] = str(layout.replays_dir)
     write_json_file(layout.config_path, config, allow_overwrite=True)
+    write_resolved_config(layout.path, config)
 
     callbacks = [
         CheckpointCallback(save_freq=5_000, save_path=str(layout.checkpoints_dir), name_prefix="ha2"),
@@ -378,6 +404,7 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         if hasattr(model.policy, "activation_fn"):
             config["activation_fn"] = model.policy.activation_fn.__name__
         write_json_file(layout.config_path, config, allow_overwrite=True)
+        write_resolved_config(layout.path, config)
     except Exception as e:
         print(f"Warning: Could not update config with policy metadata: {e}")
 
@@ -453,6 +480,15 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         f"- checkpoints: `{layout.checkpoints_dir}`",
         f"- reports: `{layout.reports_dir}`",
         f"- replays: `{layout.replays_dir}`",
+        "",
+        "## Reproducibility",
+        "",
+        "- Command: `command.txt`",
+        "- Raw argv: `argv.json`",
+        "- Resolved config: `resolved_config.json`",
+        "- Invocation metadata: `invocation_metadata.json`",
+        "- Git info: `git_info.txt`",
+        "- Note: `command.txt` is reconstructed from argv; original shell quoting is not recoverable.",
     ]
     write_text_file(layout.summary_path, "\n".join(summary_lines) + "\n", allow_overwrite=True)
 

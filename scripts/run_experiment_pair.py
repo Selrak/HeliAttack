@@ -13,6 +13,12 @@ from typing import List, Dict
 
 from ha2_env import TRAINING_PROFILES
 from scripts.experiment_utils import resume_lineage
+from scripts.invocation_metadata import (
+    capture_invocation_metadata,
+    reconstruct_command_for_display,
+    write_invocation_files,
+    write_resolved_config,
+)
 from scripts.runtime_config import (
     DEFAULT_CONTROL_MODE,
     DEFAULT_MAX_EPISODE_STEPS,
@@ -36,6 +42,8 @@ class JobResult:
     duration_seconds: float = 0.0
     experiment_path: str | None = None
     timing_report_path: str | None = None
+    command_path: str | None = None
+    argv_path: str | None = None
 
 def get_auto_threads() -> int:
     cpu_count = os.cpu_count() or 1
@@ -54,8 +62,12 @@ def create_thread_env(threads: int) -> Dict[str, str]:
 def run_job(name: str, args: List[str], env: Dict[str, str], log_dir: Path) -> JobResult:
     stdout_path = log_dir / f"{name}.stdout.log"
     stderr_path = log_dir / f"{name}.stderr.log"
+    command_path = log_dir / f"{name}_command.txt"
+    argv_path = log_dir / f"{name}_argv.json"
     
     command = [sys.executable, "-m", "scripts.run_experiment"] + args
+    command_path.write_text(reconstruct_command_for_display(command) + "\n", encoding="utf-8")
+    argv_path.write_text(json.dumps(command, indent=2) + "\n", encoding="utf-8")
     start_dt = datetime.now()
     start_tick = time.perf_counter()
     
@@ -101,7 +113,9 @@ def run_job(name: str, args: List[str], env: Dict[str, str], log_dir: Path) -> J
         end_time=end_dt.isoformat(),
         duration_seconds=duration,
         experiment_path=exp_path,
-        timing_report_path=timing_path
+        timing_report_path=timing_path,
+        command_path=str(command_path),
+        argv_path=str(argv_path),
     )
 
 def main() -> None:
@@ -174,6 +188,16 @@ def main() -> None:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     root_log_dir = Path(f"experiments/pair_{timestamp}")
     root_log_dir.mkdir(parents=True, exist_ok=True)
+    repo_root = Path(__file__).resolve().parents[1]
+    invocation_metadata = capture_invocation_metadata(
+        "scripts.run_experiment_pair",
+        sys.argv,
+        Path.cwd(),
+        repo_root=repo_root,
+    )
+    write_invocation_files(root_log_dir, invocation_metadata, prefix="pair_")
+    # Also provide canonical top-level names at pair root.
+    write_invocation_files(root_log_dir, invocation_metadata)
     
     # Update latest_experiment link to point to the pair root
     latest_link = root_log_dir.parent / "latest_experiment"
@@ -272,6 +296,14 @@ def main() -> None:
             
             cmd_a = [sys.executable, "-m", "scripts.run_experiment"] + args_a
             cmd_b = [sys.executable, "-m", "scripts.run_experiment"] + args_b
+            command_path_a = pair_dir / "parallel_job_a_command.txt"
+            argv_path_a = pair_dir / "parallel_job_a_argv.json"
+            command_path_b = pair_dir / "parallel_job_b_command.txt"
+            argv_path_b = pair_dir / "parallel_job_b_argv.json"
+            command_path_a.write_text(reconstruct_command_for_display(cmd_a) + "\n", encoding="utf-8")
+            argv_path_a.write_text(json.dumps(cmd_a, indent=2) + "\n", encoding="utf-8")
+            command_path_b.write_text(reconstruct_command_for_display(cmd_b) + "\n", encoding="utf-8")
+            argv_path_b.write_text(json.dumps(cmd_b, indent=2) + "\n", encoding="utf-8")
             
             start_dt_a = datetime.now()
             start_tick_total = time.perf_counter()
@@ -390,8 +422,8 @@ def main() -> None:
 
             exp_a = get_exp(stdout_a)
             exp_b = get_exp(stdout_b)
-            mode_results["job_a"] = JobResult(cmd_a, str(stdout_a), str(stderr_a), exit_a, start_dt_a.isoformat(), datetime.now().isoformat(), end_tick_a - start_tick_a, exp_a, get_timing(exp_a))
-            mode_results["job_b"] = JobResult(cmd_b, str(stdout_b), str(stderr_b), exit_b, start_dt_b.isoformat(), datetime.now().isoformat(), end_tick_b - start_tick_b, exp_b, get_timing(exp_b))
+            mode_results["job_a"] = JobResult(cmd_a, str(stdout_a), str(stderr_a), exit_a, start_dt_a.isoformat(), datetime.now().isoformat(), end_tick_a - start_tick_a, exp_a, get_timing(exp_a), str(command_path_a), str(argv_path_a))
+            mode_results["job_b"] = JobResult(cmd_b, str(stdout_b), str(stderr_b), exit_b, start_dt_b.isoformat(), datetime.now().isoformat(), end_tick_b - start_tick_b, exp_b, get_timing(exp_b), str(command_path_b), str(argv_path_b))
             mode_results["total_parallel_duration"] = total_duration
 
         return mode_results
@@ -408,8 +440,28 @@ def main() -> None:
     for mode, data in results.items():
         serializable_results[mode] = {k: (asdict(v) if isinstance(v, JobResult) else v) for k, v in data.items()}
     serializable_results["_metadata"] = {
+        "pair_dir": str(root_log_dir),
+        "command_path": str(root_log_dir / "command.txt"),
+        "argv_path": str(root_log_dir / "argv.json"),
+        "resolved_config_path": str(root_log_dir / "resolved_config.json"),
+        "pair_invocation_metadata_path": str(root_log_dir / "pair_invocation_metadata.json"),
         "profile_a": args.profile_a,
         "profile_b": args.profile_b,
+        "experiment_label_a": args.label_a,
+        "experiment_label_b": args.label_b,
+        "total_timesteps": int(args.total_timesteps),
+        "n_envs": int(args.n_envs),
+        "vec_env": args.vec_env,
+        "wandb": args.wandb,
+        "train_eval": args.train_eval,
+        "train_eval_episodes": int(args.train_eval_episodes),
+        "eval_episodes": int(args.eval_episodes),
+        "max_episode_steps": int(args.max_episode_steps),
+        "save_replays": bool(args.save_replays),
+        "net_arch": args.net_arch,
+        "device": args.device,
+        "timing_profile": args.timing_profile,
+        "threads_per_job": num_threads,
         "control_mode_a": args.control_mode_a or args.control_mode,
         "control_mode_b": args.control_mode_b or args.control_mode,
         "reward_profile_a": args.reward_profile_a or args.reward_profile,
@@ -427,6 +479,7 @@ def main() -> None:
             fine_tune_timesteps=args.total_timesteps if resume_from_b is not None else None,
         ),
     }
+    write_resolved_config(root_log_dir, serializable_results["_metadata"])
     
     with open(summary_path, "w") as f:
         json.dump(serializable_results, f, indent=2)
@@ -442,6 +495,11 @@ def main() -> None:
     md_lines.append(f"- Job B Profile: training `{args.profile_b}`, control `{args.control_mode_b or args.control_mode}`, reward `{args.reward_profile_b or args.reward_profile}`, pressure `{args.pressure_profile_b or args.pressure_profile}`")
     md_lines.append(f"- Job A Resume: `{resume_from_a if resume_from_a is not None else 'none'}`, reset_num_timesteps `{effective_reset_a}`")
     md_lines.append(f"- Job B Resume: `{resume_from_b if resume_from_b is not None else 'none'}`, reset_num_timesteps `{effective_reset_b}`")
+    md_lines.append("- Command: `command.txt`")
+    md_lines.append("- Raw argv: `argv.json`")
+    md_lines.append("- Resolved config: `resolved_config.json`")
+    md_lines.append("- Pair invocation metadata: `pair_invocation_metadata.json`")
+    md_lines.append("- Note: `command.txt` is reconstructed from argv; original shell quoting is not recoverable.")
     md_lines.append("")
     
     if "sequential" in results:
@@ -451,6 +509,8 @@ def main() -> None:
         md_lines.append(f"- Job A: {seq['job_a'].duration_seconds:.2f}s")
         md_lines.append(f"- Job B: {seq['job_b'].duration_seconds:.2f}s")
         md_lines.append(f"- **Total Wallclock: {total_seq:.2f}s**")
+        md_lines.append(f"- Job A command: `{seq['job_a'].command_path}`")
+        md_lines.append(f"- Job B command: `{seq['job_b'].command_path}`")
         md_lines.append("")
 
     if "parallel" in results:
@@ -460,6 +520,8 @@ def main() -> None:
         md_lines.append(f"- Job A Duration: {par['job_a'].duration_seconds:.2f}s")
         md_lines.append(f"- Job B Duration: {par['job_b'].duration_seconds:.2f}s")
         md_lines.append(f"- **Total Wallclock (Concurrent): {total_par:.2f}s**")
+        md_lines.append(f"- Job A command: `{par['job_a'].command_path}`")
+        md_lines.append(f"- Job B command: `{par['job_b'].command_path}`")
         md_lines.append("")
         
         md_lines.append("### Replay Inspection")
@@ -499,7 +561,17 @@ def main() -> None:
     bundled_count = 0
     with zipfile.ZipFile(bundle_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
         # Add summary files
-        for sum_file in ["pair_summary.json", "pair_summary.md"]:
+        for sum_file in [
+            "pair_summary.json",
+            "pair_summary.md",
+            "argv.json",
+            "command.txt",
+            "invocation_metadata.json",
+            "pair_argv.json",
+            "pair_command.txt",
+            "pair_invocation_metadata.json",
+            "resolved_config.json",
+        ]:
             sf = root_log_dir / sum_file
             if sf.exists():
                 zipf.write(sf, arcname=sum_file)
@@ -508,6 +580,13 @@ def main() -> None:
         # Define files to collect from each experiment
         exp_files = [
             "config.json",
+            "resolved_config.json",
+            "argv.json",
+            "command.txt",
+            "invocation_metadata.json",
+            "train_argv.json",
+            "train_command.txt",
+            "train_invocation_metadata.json",
             "git_info.txt",
             "summary.md",
             "reports/eval_best.json",
@@ -531,7 +610,7 @@ def main() -> None:
                 folder_name = f"{mode}_{job_name}" if len(results) > 1 else job_name
                 
                 # Add stdout/stderr
-                for log_file in [job.stdout_log, job.stderr_log]:
+                for log_file in [job.stdout_log, job.stderr_log, job.command_path, job.argv_path]:
                     if log_file and Path(log_file).exists():
                         zipf.write(log_file, arcname=f"{folder_name}/{Path(log_file).name}")
                         bundled_count += 1

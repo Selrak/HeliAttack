@@ -94,6 +94,10 @@ Last updated: 2026-05-17 Europe/Paris
 - `scripts.train_parkour`, `scripts.run_experiment`, and `scripts.run_experiment_pair` support resume/fine-tune from SB3 model zip files. Resumed runs create new experiment directories, default to `reset_num_timesteps=False`, reject `--net-arch`, validate model/env spaces before training, and record parent lineage in configs/summaries.
 - Resume/fine-tune runs with `--timing-profile on` now load through `TimedPPO`, so rollout/update timing remains instrumented after resume.
 - `scripts.evaluate_matrix` runs cross-evaluation matrices across experiment/model entries and pressure profiles. It writes per-job logs/reports/metadata, matrix JSON/CSV/MD summaries, and a self-contained bundle under `experiments/eval_matrices/`. Replay saving is opt-in via `--save-replays`.
+- New experiment and matrix outputs record reproducibility metadata: `argv.json`, `command.txt`, `invocation_metadata.json`, and `resolved_config.json`.
+- `scripts.run_experiment` also records child command metadata such as `train_command.txt` and `eval_latest_command.txt`.
+- `scripts.run_experiment --label` is an alias for `--experiment-name`; conflicting values fail clearly.
+- `command.txt` is a best-effort reconstruction from argv; `argv.json` is the authoritative argument record.
 
 ## Handoff Behavior
 - Future Codex sessions should ask clarification questions instead of making hypotheses when requirements are unclear.
