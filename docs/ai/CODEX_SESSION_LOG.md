@@ -1379,3 +1379,90 @@ Implement opt-in `pressure_profile` values `normal`, `enemy_fire_slow_2x`, and `
 
 ### Suggested Next Step
 - Inspect the M0/M1 slow4 replays, then decide whether to add defensive diagnostics or tune curriculum/reward further.
+
+## 2026-05-18 14:05 Europe/Paris - Resume/Fine-Tune Orchestration
+
+### Task Attempted
+Add resume/fine-tune support to training orchestration without changing simulator behavior.
+
+### Files Changed
+- `scripts/experiment_utils.py`
+- `scripts/train_parkour.py`
+- `scripts/run_experiment.py`
+- `scripts/run_experiment_pair.py`
+- `tests/test_runtime_config.py`
+- `docs/ai/CURRENT_STATE.md`
+- `docs/ai/VALIDATION.md`
+- `docs/ai/CODEX_SESSION_LOG.md`
+
+### Result
+- `train_parkour`, `run_experiment`, and `run_experiment_pair` accept resume model paths and reset/no-reset timestep controls.
+- Resumed runs default to `reset_num_timesteps=False`; non-resume defaults remain reset.
+- Resumed runs reject `--net-arch`, validate action/observation spaces before training, create new experiment directories, and record parent lineage.
+
+### Validation
+- Passed: py_compile for modified orchestration scripts.
+- Passed: `.venv\Scripts\python.exe -m pytest tests/test_runtime_config.py -q` (`13 passed`).
+- Passed: `.venv\Scripts\python.exe -m pytest -q` (`106 passed, 3 warnings`).
+- Passed: single resume smoke `experiments/ha2_000091_20260518_1401_combat-bullets-v1_1024`.
+- Passed: pair resume smoke `experiments/pair_20260518_140132`.
+
+### Issues and Risks
+- Initial real resume smoke exposed SB3 `set_env` n-env incompatibility; fixed by validating with a loaded model, then loading with `PPO.load(path, env=env)`.
+- Resume compatibility is based on Gym spaces, not semantic proof that the parent task is desirable.
+
+### Suggested Next Step
+- Run a longer fine-tune comparison from the selected M0/M1 parents and inspect eval replays before interpreting policy quality.
+
+## 2026-05-18 Europe/Paris - Handoff Bundle Rule
+
+- Updated `AGENTS.md` to require a `docs/ai/codex_task_bundle_YYYYMMDD_HHMMSS.zip` after each completed `NEXT_CODEX_TASK`.
+- Bundle contents: impacted files in final state, impacted `docs/ai` files, complete `git diff`, and concise final Codex report.
+- Validation: documentation-only change; no simulator validation run.
+
+## 2026-05-18 Europe/Paris - Handoff Bundle Naming
+
+- Updated `AGENTS.md` bundle naming to include 2 task-identifying keywords, up to 4 if needed.
+- Validation: documentation-only change; no simulator validation run.
+
+## 2026-05-18 Europe/Paris - Resume Timing Instrumentation
+
+- Fixed resume + `--timing-profile on` to load the resumed model through `TimedPPO.load(..., env=env)`.
+- Validation: py_compile passed; `tests/test_runtime_config.py` passed (`13 passed`); full pytest passed (`106 passed, 3 warnings`); resume timing smoke passed at `experiments/ha2_000092_20260518_1458_combat-bullets-v1_1024`.
+- Timing smoke confirmed `rollout_count=1` and `train_update_count=1`.
+
+## 2026-05-18 Europe/Paris - Evaluation Matrix Runner
+
+### Task Attempted
+Add a cross-platform `scripts.evaluate_matrix` runner for model/pressure evaluation matrices.
+
+### Files Changed
+- `scripts/evaluate_matrix.py`
+- `tests/test_evaluate_matrix.py`
+- `docs/ai/CURRENT_STATE.md`
+- `docs/ai/VALIDATION.md`
+- `docs/ai/CODEX_SESSION_LOG.md`
+
+### Validation
+- Passed: py_compile for `scripts/evaluate_matrix.py`, `scripts/evaluate_model.py`, `scripts/runtime_config.py`.
+- Passed: `tests/test_evaluate_matrix.py` (`5 passed`).
+- Passed: full pytest (`111 passed, 3 warnings`).
+- Passed: dry-run smoke `experiments/eval_matrices/smoke_matrix_20260518_155909`.
+- Passed: real smoke `experiments/eval_matrices/smoke_matrix_real_20260518_155919`.
+
+### Result
+- Matrix runs create per-job directories with copied eval reports, stdout/stderr logs, command text, metadata, parent config, JSON/CSV/MD summaries, manifest/config, and a bundle zip.
+- Example current matrix command: `python -m scripts.evaluate_matrix --matrix-name slow2_transfer_3600 --entry "label=M0;experiment=experiments\20260518_150236_combat_bullets_v1_movement_no_boost_scripted_attack_direct_defense_v1_enemy_fire_slow_2x_500000_a;model=latest" --entry "label=M1;experiment=experiments\20260518_150236_combat_bullets_v1_movement_scripted_attack_direct_defense_v1_enemy_fire_slow_2x_500000_b;model=best" --pressure-profiles enemy_fire_slow_4x,enemy_fire_slow_2x,normal --episodes 20 --max-episode-steps 3600 --max-parallel 6 --threads-per-job 3 --no-save-replays`.
+
+### Known Limitations
+- The script rejects duplicate entry labels instead of auto-disambiguating them.
+- Real smoke used only one pressure profile and one episode per model.
+
+### Suggested Next Step
+- Run the full slow2 transfer matrix and inspect `matrix_summary.md` plus copied per-job reports before comparing policy quality.
+
+## 2026-05-18 Europe/Paris - Evaluation Matrix Polish
+
+- Fixed `--fail-fast` so queued jobs are marked skipped instead of leaving `pending` non-empty.
+- Changed replay saving default to off; `--save-replays` is now opt-in for large matrices.
+- Validation: py_compile passed; `tests/test_evaluate_matrix.py` passed (`7 passed`); full pytest passed (`113 passed, 3 warnings`); dry-run confirmed `save_replays=false`.
