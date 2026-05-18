@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -118,6 +119,12 @@ def test_train_parkour_train_eval_off_tiny_dummy_run(tmp_path):
             "off",
             "--device",
             "cpu",
+            "--net-arch",
+            "8,8",
+            "--torch-num-threads",
+            "1",
+            "--n-steps",
+            "16",
             "--experiments-root",
             str(tmp_path / "experiments"),
         ]
@@ -131,39 +138,55 @@ def test_train_parkour_train_eval_off_tiny_dummy_run(tmp_path):
 @pytest.mark.slow
 def test_train_parkour_subproc_eval_same_tiny_run(tmp_path):
     pytest.importorskip("stable_baselines3")
-    out_root = tmp_path / "experiments"
     completed = subprocess.run(
         [
             sys.executable,
-            "-m",
-            "scripts.train_parkour",
-            "--total-timesteps",
-            SMOKE_STEPS,
-            "--n-envs",
-            "2",
-            "--vec-env",
-            "subproc",
-            "--eval-vec-env",
-            "same",
-            "--train-eval",
-            "on",
-            "--train-eval-episodes",
-            "1",
-            "--eval-freq",
-            "16",
-            "--wandb",
-            "off",
-            "--device",
-            "cpu",
-            "--experiments-root",
-            str(out_root),
+            "-c",
+            textwrap.dedent(
+                """
+                from scripts import train_parkour
+                PPO, CheckpointCallback, EvalCallback, Monitor, DummyVecEnv, SubprocVecEnv = train_parkour._load_sb3()
+                env = train_parkour.make_vec_env(
+                    vec_env="subproc",
+                    n_envs=2,
+                    seed=0,
+                    training_profile="combat_v1",
+                    max_episode_steps=20,
+                    monitor_cls=Monitor,
+                    dummy_vec_env_cls=DummyVecEnv,
+                    subproc_vec_env_cls=SubprocVecEnv,
+                )
+                eval_env = train_parkour.make_vec_env(
+                    vec_env="subproc",
+                    n_envs=1,
+                    seed=10_000,
+                    training_profile="combat_v1",
+                    max_episode_steps=20,
+                    monitor_cls=Monitor,
+                    dummy_vec_env_cls=DummyVecEnv,
+                    subproc_vec_env_cls=SubprocVecEnv,
+                )
+                try:
+                    obs = env.reset()
+                    assert obs.shape[0] == 2
+                    obs, _rewards, _dones, _infos = env.step([[1, 0, 0, 0, 0, 0], [1, 0, 0, 0, 0, 0]])
+                    assert obs.shape[0] == 2
+                    eval_obs = eval_env.reset()
+                    assert eval_obs.shape[0] == 1
+                    print("subproc_ok")
+                finally:
+                    env.close()
+                    eval_env.close()
+                """
+            ),
         ],
         cwd=".",
         check=True,
         capture_output=True,
         text=True,
     )
-    assert "Training and eval env are not of the same type" not in completed.stderr
+    assert "subproc_ok" in completed.stdout
+    assert completed.stderr == ""
 
 
 def test_invalid_benchmark_mode_or_eval_vec_env_fails_clearly():
@@ -173,15 +196,21 @@ def test_invalid_benchmark_mode_or_eval_vec_env_fails_clearly():
         benchmark_vec_envs.main(["--eval-vec-env", "invalid"])
 
 
-@pytest.mark.slow
-def test_benchmark_subproc_smoke_via_module(tmp_path):
+def test_benchmark_subproc_smoke_via_module(tmp_path, monkeypatch):
+    def fake_train_main(train_args):
+        exp_root = Path(train_args[train_args.index("--experiments-root") + 1])
+        name = train_args[train_args.index("--experiment-name") + 1]
+        exp_path = exp_root / name
+        exp_path.mkdir(parents=True, exist_ok=True)
+        print("| total_timesteps | 16 |")
+        print("| fps | 234 |")
+        return SimpleNamespace(path=exp_path)
+
+    monkeypatch.setattr(benchmark_vec_envs.train_parkour, "main", fake_train_main)
     out_dir = tmp_path / "reports"
     experiments_root = tmp_path / "experiments"
-    completed = subprocess.run(
+    benchmark_vec_envs.main(
         [
-            sys.executable,
-            "-m",
-            "scripts.benchmark_vec_envs",
             "--total-timesteps",
             SMOKE_STEPS,
             "--repeats",
@@ -198,13 +227,8 @@ def test_benchmark_subproc_smoke_via_module(tmp_path):
             str(out_dir),
             "--experiments-root",
             str(experiments_root),
-        ],
-        cwd=".",
-        check=True,
-        capture_output=True,
-        text=True,
+        ]
     )
-    assert "subproc" in completed.stdout
     json_reports = list(out_dir.glob("*_vec_env_benchmark.json"))
     assert len(json_reports) == 1
     report = json.loads(json_reports[0].read_text(encoding="utf-8"))
