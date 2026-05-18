@@ -27,6 +27,7 @@ from scripts.runtime_config import (
     RuntimeConfig,
     add_runtime_config_args,
     resolve_runtime_config,
+    parse_human_count,
     runtime_env_kwargs,
 )
 
@@ -52,6 +53,7 @@ class EnvFactory:
     max_episode_steps: int | None
     control_mode: str = "full"
     reward_profile: str = "combat_default"
+    pressure_profile: str = "normal"
 
     def __call__(self):
         from stable_baselines3.common.monitor import Monitor
@@ -63,6 +65,7 @@ class EnvFactory:
                     training_profile=self.training_profile,
                     control_mode=self.control_mode,
                     reward_profile=self.reward_profile,
+                    pressure_profile=self.pressure_profile,
                     max_episode_steps=self.max_episode_steps,
                 )
             ),
@@ -83,6 +86,7 @@ def make_vec_env(
     subproc_vec_env_cls,
     control_mode: str = "full",
     reward_profile: str = "combat_default",
+    pressure_profile: str = "normal",
 ):
     env_fns = [
         EnvFactory(
@@ -92,6 +96,7 @@ def make_vec_env(
             max_episode_steps=max_episode_steps,
             control_mode=control_mode,
             reward_profile=reward_profile,
+            pressure_profile=pressure_profile,
         )
         for i in range(n_envs)
     ]
@@ -109,18 +114,24 @@ def effective_eval_vec_env(train_vec_env: str, eval_vec_env: str) -> str:
 
 def main(args_list: list[str] | None = None) -> ExperimentLayout:
     parser = argparse.ArgumentParser(description="Minimal HA2 parkour PPO training.")
-    parser.add_argument("--total-timesteps", type=int, default=10_000)
+    parser.add_argument("--total-timesteps", type=parse_human_count, default=10_000)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--n-envs", type=int, default=1)
     parser.add_argument("--vec-env", choices=["dummy", "subproc"], default="dummy")
     parser.add_argument("--train-eval", choices=["on", "off"], default="on")
-    parser.add_argument("--eval-freq", type=int, default=None, help="Evaluation frequency in vector steps (once per n-envs).")
-    parser.add_argument("--eval-freq-timesteps", type=int, default=None, help="Evaluation frequency in total timesteps (will be divided by n-envs).")
-    parser.add_argument("--train-eval-episodes", type=int, default=5)
+    parser.add_argument("--eval-freq", type=parse_human_count, default=None, help="Evaluation frequency in vector steps (once per n-envs).")
+    parser.add_argument("--eval-freq-timesteps", type=parse_human_count, default=None, help="Evaluation frequency in total timesteps (will be divided by n-envs).")
+    parser.add_argument("--train-eval-episodes", type=parse_human_count, default=5)
     parser.add_argument("--eval-vec-env", choices=["dummy", "subproc", "same"], default="dummy")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--tensorboard-log", type=Path, default=None)
     parser.add_argument("--wandb", choices=["off", "on"], default="off")
+    parser.add_argument(
+        "--n-steps",
+        type=parse_human_count,
+        default=None,
+        help="PPO rollout length per env (smoke optimization; defaults to SB3's PPO value).",
+    )
     add_runtime_config_args(parser)
     parser.add_argument("--experiments-root", type=Path, default=Path("experiments"))
     parser.add_argument("--experiment-dir", type=Path, default=None)
@@ -188,6 +199,7 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         "device": args.device,
         "training_profile": runtime_config.training_profile,
         "reward_profile": runtime_config.reward_profile,
+        "pressure_profile": runtime_config.pressure_profile,
         "control_mode": runtime_config.control_mode,
         "max_episode_steps": runtime_config.max_episode_steps,
         "wandb": args.wandb,
@@ -195,6 +207,7 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         "mirror_root_models": bool(args.mirror_root_models),
         "resume_from": str(args.resume_from) if args.resume_from is not None else None,
         "net_arch": args.net_arch if args.net_arch else "default",
+        "ppo_n_steps": int(args.n_steps) if args.n_steps is not None else None,
     }
     write_json_file(layout.config_path, config)
     write_text_file(layout.git_info_path, git_info_text(repo_root), allow_overwrite=True)
@@ -207,6 +220,7 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
             n_envs=args.n_envs,
             vec_env=args.vec_env,
             training_profile=runtime_config.training_profile,
+            pressure_profile=runtime_config.pressure_profile,
             net_arch=args.net_arch or "default",
             torch_num_threads=effective_torch_threads,
             omp_num_threads=os.environ.get("OMP_NUM_THREADS"),
@@ -220,6 +234,7 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         training_profile=runtime_config.training_profile,
         control_mode=runtime_config.control_mode,
         reward_profile=runtime_config.reward_profile,
+        pressure_profile=runtime_config.pressure_profile,
         max_episode_steps=runtime_config.max_episode_steps,
         monitor_cls=Monitor,
         dummy_vec_env_cls=DummyVecEnv,
@@ -242,6 +257,7 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
             training_profile=runtime_config.training_profile,
             control_mode=runtime_config.control_mode,
             reward_profile=runtime_config.reward_profile,
+            pressure_profile=runtime_config.pressure_profile,
             max_episode_steps=runtime_config.max_episode_steps,
             monitor_cls=Monitor,
             dummy_vec_env_cls=DummyVecEnv,
@@ -300,6 +316,7 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
             tensorboard_log=str(tensorboard_log),
             device=args.device,
             policy_kwargs=policy_kwargs if policy_kwargs else None,
+            **({"n_steps": int(args.n_steps)} if args.n_steps is not None else {}),
         )
 
     # Try to extract parameter count and activation fn to update config
@@ -354,6 +371,7 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         f"- experiment: `{layout.path}`",
         f"- training_profile: `{runtime_config.training_profile}`",
         f"- reward_profile: `{runtime_config.reward_profile}`",
+        f"- pressure_profile: `{runtime_config.pressure_profile}`",
         f"- control_mode: `{runtime_config.control_mode}`",
         f"- policy_action_space_nvec: `{config.get('policy_action_space_nvec')}`",
         f"- sim_action_space_nvec: `{config.get('sim_action_space_nvec')}`",
@@ -369,6 +387,7 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         f"- train_eval_episodes: `{args.train_eval_episodes}`",
         f"- device: `{args.device}`",
         f"- tensorboard_log: `{tensorboard_log}`",
+        f"- ppo_n_steps: `{args.n_steps if args.n_steps is not None else 'default'}`",
         f"- latest_model: `{layout.models_dir / 'latest.zip'}`",
         f"- best_model: `{layout.models_dir / 'best.zip'}`" if best_model.exists() else "- best_model: `not produced`",
         f"- checkpoints: `{layout.checkpoints_dir}`",

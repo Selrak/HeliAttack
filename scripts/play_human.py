@@ -101,6 +101,7 @@ def main() -> None:
         "Controls: A/D or Q/D or Left/Right move, W/Z/Up jump, S/Down duck, Shift hyperjump, "
         "Left mouse aim/fire, P/Space pause, N step, R reset, F1 debug, F2 slow, Esc quit."
     )
+    print(f"Pressure profile: {runtime_config.pressure_profile}")
 
     env.render(
         debug_overlay=debug_overlay,
@@ -153,6 +154,7 @@ def main() -> None:
             fps = args.slow_fps if slow_motion else args.fps
             extra = [
                 f"fps={clock.get_fps():.1f} target={fps} paused={paused} slow={slow_motion}",
+                f"pressure={runtime_config.pressure_profile}",
                 "controls: mouse aim/fire F1 debug F2 slow F3 hitboxes F12 screenshot P/Space pause N step R reset Esc quit",
             ]
             env.render(

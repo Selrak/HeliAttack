@@ -31,6 +31,7 @@ class TrainingTiming:
     n_envs: int = 1
     vec_env: str = "dummy"
     training_profile: str = "combat_v1"
+    pressure_profile: str = "normal"
     net_arch: str = "default"
     torch_num_threads: int | None = None
     omp_num_threads: str | None = None
@@ -66,6 +67,7 @@ class TrainingTiming:
             f"- n_envs: {self.n_envs}",
             f"- vec_env: {self.vec_env}",
             f"- profile: {self.training_profile}",
+            f"- pressure_profile: {self.pressure_profile}",
             f"- net_arch: {self.net_arch}",
             f"- torch_threads: {self.torch_num_threads}",
         ]

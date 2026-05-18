@@ -151,6 +151,15 @@ COMBAT_BULLETS_V1_OBS_SIZE = len(COMBAT_BULLETS_V1_OBS_FIELDS)
 
 
 REWARD_PROFILES = {"combat_default", "defense_v1"}
+PRESSURE_PROFILE_NORMAL = "normal"
+PRESSURE_PROFILE_ENEMY_FIRE_SLOW_2X = "enemy_fire_slow_2x"
+PRESSURE_PROFILE_ENEMY_FIRE_SLOW_4X = "enemy_fire_slow_4x"
+PRESSURE_PROFILE_FIRE_INTERVAL_MULTIPLIERS = {
+    PRESSURE_PROFILE_NORMAL: 1,
+    PRESSURE_PROFILE_ENEMY_FIRE_SLOW_2X: 2,
+    PRESSURE_PROFILE_ENEMY_FIRE_SLOW_4X: 4,
+}
+PRESSURE_PROFILES = set(PRESSURE_PROFILE_FIRE_INTERVAL_MULTIPLIERS)
 
 class HeliAttack2Env(gym.Env):
     """
@@ -172,6 +181,7 @@ class HeliAttack2Env(gym.Env):
         respawn_helis: bool = True,
         training_profile: str = "legacy",
         reward_profile: str = "combat_default",
+        pressure_profile: str = PRESSURE_PROFILE_NORMAL,
         max_episode_steps: int | None = None,
     ):
         super().__init__()
@@ -186,6 +196,13 @@ class HeliAttack2Env(gym.Env):
                 f"expected one of {sorted(REWARD_PROFILES)}"
             )
         self.reward_profile = reward_profile
+        if pressure_profile not in PRESSURE_PROFILES:
+            raise ValueError(
+                f"Unknown pressure_profile {pressure_profile!r}; "
+                f"expected one of {sorted(PRESSURE_PROFILES)}"
+            )
+        self.pressure_profile = pressure_profile
+        self.enemy_fire_interval_multiplier = PRESSURE_PROFILE_FIRE_INTERVAL_MULTIPLIERS[pressure_profile]
         if max_episode_steps is not None and int(max_episode_steps) <= 0:
             raise ValueError("max_episode_steps must be positive or None")
         self.render_mode = render_mode
@@ -636,7 +653,7 @@ class HeliAttack2Env(gym.Env):
             enemy_gun_sin, enemy_gun_cos = self._angle_sin_cos(
                 float(enemy.get("rotation", 0.0)) + float(enemy.get("gun_rotation", 0.0))
             )
-            shoot_period = max(10, HELI_SHOOT_RELOAD_BASE - self.level)
+            shoot_period = self._heli_shoot_period()
             values.extend(
                 [
                     1.0,
@@ -685,6 +702,9 @@ class HeliAttack2Env(gym.Env):
             raise AssertionError(f"combat_bullets_v1 observation size mismatch: {obs.shape}")
         return obs
 
+    def _heli_shoot_period(self) -> int:
+        return max(10, HELI_SHOOT_RELOAD_BASE - self.level) * self.enemy_fire_interval_multiplier
+
     def _get_combat_v1_obs(self) -> np.ndarray:
         # COMBAT_V1_OBS_FIELDS defines the stable index layout for SB3 MlpPolicy.
         gun_sin, gun_cos = self._angle_sin_cos(self.gun_rotation)
@@ -723,7 +743,7 @@ class HeliAttack2Env(gym.Env):
             enemy_gun_sin, enemy_gun_cos = self._angle_sin_cos(
                 float(enemy.get("rotation", 0.0)) + float(enemy.get("gun_rotation", 0.0))
             )
-            shoot_period = max(10, HELI_SHOOT_RELOAD_BASE - self.level)
+            shoot_period = self._heli_shoot_period()
             values.extend(
                 [
                     1.0,
@@ -1257,7 +1277,7 @@ class HeliAttack2Env(gym.Env):
 
             if move:
                 shoot = int(enemy.get("shoot", 0))
-                if shoot % max(10, HELI_SHOOT_RELOAD_BASE - self.level) == 1:
+                if shoot % self._heli_shoot_period() == 1:
                     barrel_x, barrel_y = self._heli_gun_barrel_world_pos(enemy)
                     spread = int(self.np_random.integers(0, 10))
                     bullet_id = self._add_enemy_bullet(
@@ -1992,7 +2012,8 @@ class HeliAttack2Env(gym.Env):
             f"gun=MachineGun rot={self.gun_rotation:.1f} reload={self._state_value(self.gun_reloadtime)} shots={self.player_shot_attempts}/{self.player_bullets_spawned} bullets={len(self.bullets)}",
             f"combat=health:{self.health} last_damage:{self.last_player_damage_amount}@{self.last_player_damage_tick} score:{self.score} hits:{self.hits} helis:{self.helis}",
             f"enemies={len(self.enemies)} hp=[{enemy_healths}] kills={self.rthelis} pending_heli={self.pending_default_heli}",
-            f"ebullets={len(self.enemy_bullets)} enemy_event={self.last_enemy_event}",
+            f"pressure={self.pressure_profile} fire_period={self._heli_shoot_period()} ebullets={len(self.enemy_bullets)} spawned={self.total_enemy_bullets_spawned}",
+            f"enemy_event={self.last_enemy_event}",
             f"gun_pivot=({self._machinegun_visual_pivot_world_pos()[0]:.1f},{self._machinegun_visual_pivot_world_pos()[1]:.1f}) barrel=({self._machinegun_visual_barrel_world_pos(self.gun_rotation)[0]:.1f},{self._machinegun_visual_barrel_world_pos(self.gun_rotation)[1]:.1f}) spawn=({self._gun_barrel_world_pos(self.gun_rotation)[0]:.1f},{self._gun_barrel_world_pos(self.gun_rotation)[1]:.1f})",
             f"contact={self.last_contact}",
         ]
@@ -2357,6 +2378,9 @@ class HeliAttack2Env(gym.Env):
             "engine_enemy_bullets_spawned": int(self.total_enemy_bullets_spawned),
             "engine_enemy_bullets_active": len(self.enemy_bullets),
             "enemy_bullet_hits_not_visible": int(self.enemy_bullet_hits_not_visible),
+            "pressure_profile": self.pressure_profile,
+            "enemy_fire_period": int(self._heli_shoot_period()),
+            "enemy_fire_interval_multiplier": int(self.enemy_fire_interval_multiplier),
             "damage_event_frames": damage_frames,
             "damage_events": len(damage_frames),
             "time_to_first_damage": time_to_first_damage,
@@ -2373,6 +2397,9 @@ class HeliAttack2Env(gym.Env):
         info = {
             "tick": self.tick,
             "state_hash": self.state_hash(),
+            "pressure_profile": self.pressure_profile,
+            "enemy_fire_period": int(self._heli_shoot_period()),
+            "enemy_fire_interval_multiplier": int(self.enemy_fire_interval_multiplier),
             "state": self.get_state(),
             "camera": [round(v, 6) for v in self.get_camera()],
             "player_health": int(self.health),
@@ -2442,6 +2469,7 @@ class HeliAttack2Env(gym.Env):
                 "frames_pressing_right_at_right_edge": self.frames_pressing_right_at_right_edge,
                 "min_player_x": float(self.min_player_x),
                 "max_player_x": float(self.max_player_x),
+                "player_x_range": float(self.max_player_x - self.min_player_x),
             }
             info["movement_diagnostics"] = movement
             info.update(movement)

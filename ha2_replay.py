@@ -46,6 +46,7 @@ class JsonlReplayWriter:
             "env_version": ENV_VERSION,
             "training_profile": base_env.training_profile,
             "reward_profile": getattr(base_env, "reward_profile", "combat_default"),
+            "pressure_profile": getattr(base_env, "pressure_profile", "normal"),
             "max_episode_steps": base_env.max_episode_steps,
             "control_mode": getattr(env, "control_mode", CONTROL_MODE_FULL),
             "policy_action_space_nvec": policy_action_space_nvec(env),
@@ -96,6 +97,7 @@ class JsonlReplayWriter:
                 "debug": {
                     "control_mode": control_mode,
                     "reward_profile": getattr(base_env, "reward_profile", "combat_default"),
+                    "pressure_profile": getattr(base_env, "pressure_profile", "normal"),
                     "policy_action": policy_action,
                     "full_action": full_action,
                     "reward_breakdown": info.get("reward_breakdown"),
@@ -149,6 +151,7 @@ def verify_replay_file(path: str | Path) -> int:
         render_mode=None,
         training_profile=header.get("training_profile", "legacy"),
         reward_profile=header.get("reward_profile", "combat_default"),
+        pressure_profile=header.get("pressure_profile", "normal"),
         max_episode_steps=header.get("max_episode_steps"),
     )
     obs, _info = env.reset(seed=int(header["seed"]))

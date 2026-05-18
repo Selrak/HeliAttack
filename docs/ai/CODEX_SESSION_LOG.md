@@ -259,6 +259,177 @@ Have ChatGPT webchat produce a concrete implementation phase and paste it into `
 - Remaining risks: exact HUD composition, Flash shape `hitTest`, AS `helis==3` powerup cycle, and full gameover remain unimplemented.
 - Next: manually watch `kill_heli_respawn_600` and decide whether to implement faithful original HUD composition.
 
+## 2026-05-17 23:23 Europe/Paris - Pytest Runtime Cut
+
+### Task Attempted
+Reduced end-to-end pytest runtime by trimming duplicate or expensive smoke coverage.
+
+### Files Changed or Updated
+- Updated `tests/test_benchmark_orchestration.py`.
+- Updated `tests/test_vec_env_benchmark.py`.
+- Updated `tests/test_curriculum.py`.
+- Updated `tests/test_runtime_config.py`.
+- Updated `tests/test_reward_profiles.py`.
+- Updated `docs/ai/CURRENT_STATE.md`.
+- Updated `docs/ai/VALIDATION.md`.
+- Updated `docs/ai/CODEX_SESSION_LOG.md`.
+
+### Repository Facts Discovered
+- The full suite now completes in about 35.9 seconds locally.
+- The slowest remaining tests are the subproc VecEnv smoke, the curriculum training smoke, the runtime CLI acceptance loop, and the parallel benchmark orchestration test.
+- `python -m pytest` must be run from `.venv` on this machine because the system Python does not have pytest installed.
+
+### Commands Run
+- `& .\.venv\Scripts\python.exe -m pytest tests/test_benchmark_orchestration.py tests/test_vec_env_benchmark.py tests/test_curriculum.py tests/test_runtime_config.py tests/test_reward_profiles.py -q --durations=25`
+- `& .\.venv\Scripts\python.exe -m pytest -q --durations=25`
+
+### Validation Result
+- Passed: focused subset, `35 passed in 23.58s`.
+- Passed: full suite, `100 passed in 35.89s`.
+
+### Bugs or Blockers Encountered
+- `test_parallel_staggered_durations` was still using `tmp_path` without receiving it; fixed by adding the fixture argument.
+- The system Python lacked pytest, so validation had to use the project venv.
+
+### Fixes or Workarounds Applied
+- Reduced PPO smoke cost by lowering `n_steps` to 16 in the small training tests.
+- Replaced one SB3 import-heavy reward-profile test with a fake `Monitor` module.
+- Replaced a full training-based subproc smoke with a direct `SubprocVecEnv` creation/step check.
+- Removed duplicate subprocess `--help` coverage for scripts already covered by more direct runtime-config tests.
+- Isolated the benchmark orchestration test in `tmp_path` and added retry cleanup for Windows file handles.
+
+### Architectural Discrepancy Introduced or Discovered
+- None. These changes only reduced test cost and did not change simulator behavior.
+
+### Remaining Risks
+- The suite is much faster, but the subproc VecEnv smoke still dominates wall time.
+- The benchmark orchestration test remains slower than the rest and may merit a later split if more speed is needed.
+
+### Suggested Next Step for ChatGPT Webchat to Review
+- Decide whether to keep the remaining expensive smoke tests as-is or split them into a separate slow marker for optional CI.
+
+## 2026-05-17 23:23 Europe/Paris - Watch Model Config Inference Fix
+
+### Task Attempted
+Fixed `watch_model`/`evaluate_model` loading a model from `experiments/.../models/` without an explicit `--experiment`.
+
+### Files Changed or Updated
+- Updated `scripts/experiment_utils.py`.
+- Updated `scripts/watch_model.py`.
+- Updated `scripts/evaluate_model.py`.
+- Updated `docs/ai/CURRENT_STATE.md`.
+- Updated `docs/ai/CODEX_SESSION_LOG.md`.
+
+### Repository Facts Discovered
+- A direct model path inside an experiment directory was not enough for runtime config inference.
+- The failure mode was an 84-dim model being paired with the default 37-dim env.
+
+### Commands Run
+- `& .\.venv\Scripts\python.exe -m py_compile scripts/watch_model.py scripts/evaluate_model.py scripts/experiment_utils.py`
+- `& .\.venv\Scripts\python.exe -c "...resolve_experiment_layout_and_config...make_controlled_env..."`
+
+### Validation Result
+- Passed: syntax check.
+- Passed: direct inference smoke returned `movement_no_boost_scripted_attack_direct` and env observation shape `(84,)`.
+
+### Bugs or Blockers Encountered
+- None.
+
+### Fixes or Workarounds Applied
+- Added shared experiment-layout/config inference from a model path when it lives under `experiments/.../models/`.
+- Kept root-level `models/best.zip` and `models/latest.zip` behavior unchanged.
+
+### Architectural Discrepancy Introduced or Discovered
+- None.
+
+### Remaining Risks
+- If a model is moved out of its experiment directory, `watch_model` still needs `--experiment` or matching runtime flags.
+
+### Suggested Next Step for ChatGPT Webchat to Review
+- None; this was a narrow compatibility fix.
+
+## 2026-05-17 23:23 Europe/Paris - Watch Model Wrapper Render Fix
+
+### Task Attempted
+Fixed `watch_model` failing when the loaded experiment uses a control wrapper.
+
+### Files Changed or Updated
+- Updated `scripts/watch_model.py`.
+- Updated `docs/ai/CURRENT_STATE.md`.
+- Updated `docs/ai/CODEX_SESSION_LOG.md`.
+
+### Repository Facts Discovered
+- `watch_model` was calling `render(debug_overlay=...)` on a Gym wrapper, not the base env.
+- The failing case is wrapper-based control modes such as `movement_no_boost_scripted_attack_direct`.
+
+### Commands Run
+- `& .\.venv\Scripts\python.exe -m py_compile scripts/watch_model.py scripts/experiment_utils.py scripts/evaluate_model.py`
+
+### Validation Result
+- Passed: syntax check.
+
+### Bugs or Blockers Encountered
+- None.
+
+### Fixes or Workarounds Applied
+- Switched `watch_model` rendering to `env.unwrapped.render(...)`.
+
+### Architectural Discrepancy Introduced or Discovered
+- None.
+
+### Remaining Risks
+- Other wrapper-based scripts may still need the same pattern if they start passing custom render kwargs.
+
+### Suggested Next Step for ChatGPT Webchat to Review
+- Retry the exact `watch_model` command against the experiment model path.
+
+## 2026-05-18 12:04 Europe/Paris - Human-Friendly Count Parsing
+
+### Task Attempted
+Added suffix/underscore parsing for step/timestep-style CLI counts.
+
+### Files Changed or Updated
+- Updated `scripts/runtime_config.py`.
+- Updated `scripts/train_parkour.py`.
+- Updated `scripts/run_experiment.py`.
+- Updated `scripts/run_experiment_pair.py`.
+- Updated `scripts/benchmark_vec_envs.py`.
+- Updated `scripts/record_random_replay.py`.
+- Updated `scripts/record_scripted_trace.py`.
+- Updated `tests/test_runtime_config.py`.
+- Updated `docs/ai/CURRENT_STATE.md`.
+- Updated `docs/ai/VALIDATION.md`.
+- Updated `docs/ai/CODEX_SESSION_LOG.md`.
+
+### Repository Facts Discovered
+- Plain `int` parsing already accepted underscore-separated numerals like `500_000`.
+- Suffix forms like `500k` and `1M` were not accepted before this change.
+
+### Commands Run
+- `& .\.venv\Scripts\python.exe -m py_compile scripts/runtime_config.py scripts/train_parkour.py scripts/run_experiment.py scripts/run_experiment_pair.py scripts/benchmark_vec_envs.py scripts/record_random_replay.py scripts/record_scripted_trace.py`
+- `& .\.venv\Scripts\python.exe -m pytest tests/test_runtime_config.py -q`
+- `& .\.venv\Scripts\python.exe -m pytest -q`
+
+### Validation Result
+- Passed: syntax check.
+- Passed: runtime-config test file, `8 passed`.
+- Passed: full suite, `101 passed in 34.69s`.
+
+### Bugs or Blockers Encountered
+- None.
+
+### Fixes or Workarounds Applied
+- Added a shared `parse_human_count()` helper and wired it into the step/timestep-style CLI args only.
+
+### Architectural Discrepancy Introduced or Discovered
+- None.
+
+### Remaining Risks
+- Only the CLI fields wired through the helper accept suffixes; unrelated numeric args such as seeds and FPS still use plain integers by design.
+
+### Suggested Next Step for ChatGPT Webchat to Review
+- None; this was a narrow input-format improvement.
+
 ## 2026-05-05 11:48 +02:00 - Original Healthbar HUD
 
 - Task: add the player healthbar HUD now, without broad HUD composition.
@@ -1175,3 +1346,36 @@ Centralize shared runtime argument/config handling for `training_profile`, `cont
 
 ### Suggested Next Step
 - Add `pressure_profile` using `scripts/runtime_config.py` instead of adding per-script arguments manually.
+
+## 2026-05-17 22:48 Europe/Paris - Add Pressure Profile Curriculum
+
+### Task Attempted
+Implement opt-in `pressure_profile` values `normal`, `enemy_fire_slow_2x`, and `enemy_fire_slow_4x` for Heli fire cadence without changing default behavior.
+
+### Files Changed
+- `ha2_env.py`, `ha2_replay.py`
+- `scripts/runtime_config.py`, `scripts/train_parkour.py`, `scripts/evaluate_model.py`, `scripts/watch_model.py`, `scripts/play_human.py`, `scripts/play_replay.py`, `scripts/run_experiment.py`, `scripts/run_experiment_pair.py`, `scripts/runtime_timing.py`
+- `tests/test_pressure_profiles.py`, runtime/reporting tests
+- `docs/ai/CURRENT_STATE.md`, `docs/ai/VALIDATION.md`, `docs/ai/CODEX_SESSION_LOG.md`
+
+### Validation
+- Passed: required py_compile command.
+- Passed: `.venv\Scripts\python.exe -m pytest -q` (`100 passed`).
+- Passed: play_human argument smoke via `--help`.
+- Passed: replay verify for `replays/smoke.jsonl`, 1k slow4/normal eval replays, and 100k pair latest eval replays.
+- Passed: 1k slow4 smoke `experiments/ha2_000088_20260517_2236_combat-bullets-v1_1k`.
+- Passed: 1k normal smoke `experiments/ha2_000089_20260517_2236_combat-bullets-v1_1k`.
+- Passed: 100k M0/M1 slow4 pair `experiments/pair_20260517_223718`.
+
+### Proof
+- Direct 240-step probe: normal `13`, slow2 `7`, slow4 `4` enemy bullets spawned.
+- First enemy bullet speed/damage stayed `7.0`/`10` for all pressure profiles.
+- 1k eval comparison: slow4 spawned `32` enemy bullets; normal spawned `112`.
+- 100k latest eval: M0 reward `63.49`, damage `32.0`, visible hit rate `0.132`; M1 reward `98.82`, damage `4.0`, visible hit rate `0.018`.
+
+### Remaining Risks
+- Slow-fire profiles are curriculum modes, not AS parity modes.
+- 100k slow4 results suggest M1 benefits from boost, but do not prove robust bullet-dodging learning.
+
+### Suggested Next Step
+- Inspect the M0/M1 slow4 replays, then decide whether to add defensive diagnostics or tune curriculum/reward further.

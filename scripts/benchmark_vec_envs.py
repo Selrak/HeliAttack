@@ -11,6 +11,7 @@ import time
 import warnings
 
 from scripts import train_parkour
+from scripts.runtime_config import parse_human_count
 
 
 DEFAULT_MATRIX = {
@@ -246,17 +247,17 @@ def main(args_list: list[str] | None = None) -> None:
         description="Benchmark DummyVecEnv vs SubprocVecEnv using short HA2 PPO runs. Default mode is train-only for speed."
     )
     parser.add_argument("--mode", choices=["train-only", "workflow", "both"], default="train-only")
-    parser.add_argument("--total-timesteps", type=int, default=4096)
+    parser.add_argument("--total-timesteps", type=parse_human_count, default=4096)
     parser.add_argument("--n-envs", nargs="+", type=int, default=None)
     parser.add_argument("--vec-envs", nargs="+", choices=["dummy", "subproc"], default=["dummy", "subproc"])
-    parser.add_argument("--repeats", type=int, default=1)
+    parser.add_argument("--repeats", type=parse_human_count, default=1)
     parser.add_argument("--wandb", choices=["off", "on"], default="off")
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--eval-vec-env", choices=["dummy", "subproc", "same"], default="dummy")
-    parser.add_argument("--eval-freq", type=int, default=None)
-    parser.add_argument("--train-eval-episodes", type=int, default=1)
-    parser.add_argument("--max-episode-steps", type=int, default=1800)
+    parser.add_argument("--eval-freq", type=parse_human_count, default=None)
+    parser.add_argument("--train-eval-episodes", type=parse_human_count, default=1)
+    parser.add_argument("--max-episode-steps", type=parse_human_count, default=1800)
     parser.add_argument("--out-dir", type=Path, default=Path("reports/vec_env_benchmarks"))
     parser.add_argument("--experiments-root", type=Path, default=Path("experiments"))
     args = parser.parse_args(args_list)

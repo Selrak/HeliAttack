@@ -24,6 +24,8 @@ def main() -> None:
         render_mode="human",
         auto_render=False,
         training_profile=header.get("training_profile", "legacy"),
+        reward_profile=header.get("reward_profile", "combat_default"),
+        pressure_profile=header.get("pressure_profile", "normal"),
         max_episode_steps=header.get("max_episode_steps"),
     )
     env.reset(seed=int(header["seed"]))
@@ -38,7 +40,10 @@ def main() -> None:
     env.render(
         debug_overlay=debug_overlay,
         debug_collision=False,
-        debug_lines=[f"replay={args.replay.name} step=0/{len(steps)} paused={paused}"],
+        debug_lines=[
+            f"replay={args.replay.name} step=0/{len(steps)} paused={paused}",
+            f"pressure={header.get('pressure_profile', 'normal')}",
+        ],
     )
 
     try:
@@ -68,6 +73,7 @@ def main() -> None:
 
             extra = [
                 f"replay={args.replay.name} step={index}/{len(steps)} paused={paused} fast={fast_forward}",
+                f"pressure={header.get('pressure_profile', 'normal')}",
                 "controls: F1 debug F fast-forward P/Space pause N step Esc quit",
             ]
             env.render(debug_overlay=debug_overlay, debug_collision=False, debug_lines=extra)

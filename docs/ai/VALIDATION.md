@@ -1,10 +1,10 @@
 # Validation
 
-Run from repo root after installing `requirements.txt`:
+Run from repo root after installing `requirements.txt`. Use the project venv (`.venv`) if the system Python does not have pytest/SB3:
 
 ```powershell
 python -m py_compile ha2_env.py ha2_replay.py extract_ha2_data.py ha2_constants.py
-python -m py_compile scripts/runtime_config.py scripts/experiment_utils.py scripts/train_parkour.py scripts/evaluate_model.py scripts/watch_model.py scripts/play_human.py scripts/run_experiment.py scripts/benchmark_vec_envs.py
+python -m py_compile scripts/runtime_config.py scripts/experiment_utils.py scripts/train_parkour.py scripts/evaluate_model.py scripts/watch_model.py scripts/play_human.py scripts/play_replay.py scripts/run_experiment.py scripts/run_experiment_pair.py scripts/benchmark_vec_envs.py
 python -m pytest
 python -m scripts.record_random_replay --steps 300 --out replays/smoke.jsonl
 python -m scripts.verify_replay replays/smoke.jsonl
@@ -22,6 +22,8 @@ python -c "from stable_baselines3.common.env_checker import check_env; from ha2_
 python -m scripts.run_experiment --training-profile combat_bullets_v1 --total-timesteps 1000 --n-envs 1 --vec-env dummy --wandb off --train-eval off --eval-episodes 1 --save-replays --timing-profile on --torch-num-threads 2 --net-arch 128,128 --eval-freq-timesteps 500
 python -m scripts.run_experiment_pair --mode parallel --profile-a combat_v1 --profile-b combat_bullets_v1 --total-timesteps 1000 --n-envs 1 --vec-env dummy --wandb off --train-eval off --eval-episodes 1 --save-replays --timing-profile on --threads-per-job 2 --net-arch 128,128 --stagger-seconds 0 --seed 0 --seed-b 0 --eval-freq-timesteps 500
 python -m scripts.run_experiment_pair --mode parallel --profile-a combat_bullets_v1 --profile-b combat_bullets_v1 --control-mode-a movement_no_boost_scripted_attack_direct --control-mode-b movement_scripted_attack_direct --label-a M0_no_boost --label-b M1_boost --total-timesteps 100000 --n-envs 4 --vec-env dummy --wandb off --train-eval on --eval-freq-timesteps 50000 --train-eval-episodes 2 --eval-episodes 5 --save-replays --net-arch 128,128 --threads-per-job 6 --timing-profile on --seed 0 --seed-b 0
+python -m scripts.run_experiment --training-profile combat_bullets_v1 --control-mode movement_scripted_attack_direct --reward-profile defense_v1 --pressure-profile enemy_fire_slow_4x --total-timesteps 1000 --n-envs 1 --vec-env dummy --wandb off --train-eval off --eval-episodes 1 --save-replays --timing-profile on --torch-num-threads 2 --net-arch 128,128
+python -m scripts.run_experiment_pair --mode parallel --profile-a combat_bullets_v1 --profile-b combat_bullets_v1 --control-mode-a movement_no_boost_scripted_attack_direct --control-mode-b movement_scripted_attack_direct --reward-profile-a defense_v1 --reward-profile-b defense_v1 --pressure-profile-a enemy_fire_slow_4x --pressure-profile-b enemy_fire_slow_4x --label-a M0_defense_slow4 --label-b M1_defense_slow4 --total-timesteps 100000 --n-envs 4 --vec-env dummy --wandb off --train-eval on --eval-freq-timesteps 50000 --train-eval-episodes 2 --eval-episodes 5 --save-replays --net-arch 128,128 --threads-per-job 6 --timing-profile on --seed 0 --seed-b 0
 python -m scripts.train_parkour --total-timesteps 1024 --n-envs 1 --vec-env dummy --train-eval off --wandb off
 python -m scripts.train_parkour --total-timesteps 1024 --n-envs 2 --vec-env subproc --eval-vec-env same --train-eval on --train-eval-episodes 1 --wandb off
 python -m scripts.benchmark_vec_envs --mode train-only --total-timesteps 2048 --repeats 1 --vec-envs dummy subproc --n-envs 1 2 --wandb off --device cpu
@@ -42,7 +44,7 @@ Experiment smoke output:
 - `experiments/<created_experiment>/reports/eval_latest.json`
 - `experiments/<created_experiment>/reports/eval_best.json`
 - Evaluation reports should include visible enemy-bullet metrics, damage timing metrics, and defensive rates.
-- Evaluation reports should include top-level `reward_profile` and aggregated `reward_breakdown`; replay headers should include `reward_profile`, and replay step debug should include `reward_breakdown`.
+- Evaluation reports should include top-level `reward_profile`, `pressure_profile`, and aggregated `reward_breakdown`; replay headers should include `reward_profile` and `pressure_profile`, and replay step debug should include `reward_breakdown`.
 - Curriculum reports should include `policy_action_space_nvec`, `sim_action_space_nvec`, `policy_action_distributions`, and `full_action_distributions`.
 - M0 (`movement_no_boost_scripted_attack_direct`) replay `action` values should be full 6D simulator actions with `action[3] == 0` for every step.
 - `experiments/<created_experiment>/reports/timing/train_timing.json` and `.md`
@@ -56,6 +58,7 @@ Manual GUI checks:
 
 ```powershell
 python -m scripts.play_human
+python -m scripts.play_human --pressure-profile enemy_fire_slow_4x
 python -m scripts.play_replay replays/smoke.jsonl
 python -m scripts.play_replay reports/parity_traces/walk_right_120.jsonl
 python -m scripts.play_replay reports/parity_traces/fire_right_60.jsonl
@@ -78,3 +81,11 @@ Local environment:
 Vector-env benchmark reports are written to ignored files under `reports/vec_env_benchmarks/`.
 
 Final reports should stay concise: files changed, validation run, pass/fail, manual checks, blockers, risks, next step.
+
+Current fast-path note: the full pytest suite runs in about 36 seconds locally after trimming a few duplicate/expensive smoke checks.
+
+Watch/evaluate note: `scripts.watch_model` and `scripts.evaluate_model` can now infer experiment config from `experiments/.../models/*.zip` when `--experiment` is omitted, so direct model-path runs should not need extra runtime flags if the model stays inside its experiment folder.
+
+Watch-model note: wrapper-based control modes render through `env.unwrapped`, so custom GUI render kwargs should now work for experiment models that use scripted control wrappers.
+
+Count-format note: step/timestep CLI arguments now accept `500_000`, `500k`, `1_000_000`, and `1M` where those arguments are wired through the shared human-count parser.

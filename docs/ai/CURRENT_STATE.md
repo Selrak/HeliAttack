@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-16 Europe/Paris
+Last updated: 2026-05-17 Europe/Paris
 
 ## What Appears to Work
 - Python 3.11.9 is available locally; `.venv` has pytest and SB3 installed.
@@ -25,12 +25,14 @@ Last updated: 2026-05-16 Europe/Paris
 - `training_profile="combat_bullets_v1"` is available, extending the observation to 84 dimensions by replacing the single nearest bullet with a top-10 visible bullet block to enable defensive maneuvering.
 - `reward_profile` logic supports `combat_default` (base rewards) and `defense_v1` (heavy penalties for player damage, edge camping, and inefficient inputs).
 - Reward profiles are now propagated through training, train-time eval, final eval, watch, and replay verification. New replay headers include `reward_profile`; replay step debug and eval reports include `reward_breakdown`.
-- Shared runtime CLI/config plumbing for `training_profile`, `control_mode`, `reward_profile`, and `max_episode_steps` is centralized in `scripts/runtime_config.py`.
-- `scripts.train_parkour`, `scripts.evaluate_model`, and `scripts.watch_model` default to `combat_v1` but support `combat_bullets_v1`, `--control-mode`, and `--reward-profile`.
+- `pressure_profile` is available as an opt-in fire-pressure curriculum: `normal` default, `enemy_fire_slow_2x`, and `enemy_fire_slow_4x`. It scales enemy Heli fire interval only.
+- Shared runtime CLI/config plumbing for `training_profile`, `control_mode`, `reward_profile`, `pressure_profile`, and `max_episode_steps` is centralized in `scripts/runtime_config.py`.
+- `scripts.train_parkour`, `scripts.evaluate_model`, `scripts.watch_model`, `scripts.run_experiment`, `scripts.run_experiment_pair`, and `scripts.play_human` support `--pressure-profile`.
 - Curriculum `ActionWrapper`s are implemented in `ha2_env.py`: `movement_scripted_attack_direct` (agent controls 4 movement axes) and `movement_no_boost_scripted_attack_direct` (agent controls 3 axes). Both use a deterministic heuristic to aim and fire at the primary Heli.
 - Experiments are now the default unit of RL artifact storage: `scripts.train_parkour` creates `experiments/ha2_000001_YYYYMMDD_HHMM_combat-v1_1k/`-style runs with `config.json`, `git_info.txt`, `summary.md`, `models/`, `reports/`, `replays/`, and `tensorboard/`.
 - `scripts.evaluate_model` and `scripts.watch_model` resolve `best`/`latest` models from an experiment and auto-detect the correct `control_mode` from `config.json`.
 - `scripts.play_replay` and `scripts.watch_model` now support an `F` fast-forward toggle for faster GUI inspection.
+- New replay headers include `pressure_profile`; replay verification and GUI replay instantiate with the recorded profile.
 - `scripts.run_experiment` orchestrates training and evaluation, supporting `--net-arch`, `--control-mode`, `--eval-freq-timesteps`, and producing consolidated diagnostic bundles.
 - `scripts.run_experiment_pair` supports comparative A/B benchmarks with individual `duration_seconds` reporting and consolidated Super-Bundles, including a `rich` TUI for parallel live monitoring.
 - `ha2_env.py` tracks 25+ movement and edge-camping diagnostics (grounded/airborne frames, boost activations, lateral range, consecutive edge frames, mismatch rates), evaluated after physics execution.
@@ -43,6 +45,7 @@ Last updated: 2026-05-16 Europe/Paris
 
 ## What Is Unknown
 - SB3 model quality is not meaningful from the 100k curriculum runs; agents mostly learn to charge right with the auto-aim.
+- The 2026-05-17 slow4 100k M0/M1 run completed; M1 used boost and had lower damage than M0, but this is not yet proof of robust learned dodging.
 - Scripted traces have not been compared against Flash yet.
 - AS bit-for-bit parity is a goal, but no parity test harness was found.
 - MachineGun/Heli combat GUI feel still needs Charles manual checks.
@@ -75,6 +78,7 @@ Last updated: 2026-05-16 Europe/Paris
 - Only the original player healthbar HUD is implemented; score/time/ammo/reload/hyperjump HUD composition remains future work.
 - `combat_v1` is an RL interface layer only; it does not prove AS parity or tune PPO behavior.
 - `combat_v1` defensive visibility diagnostics use bullet center plus an 8 px margin against the gameplay viewport; exact Flash sprite visibility is not proven.
+- `enemy_fire_slow_2x`/`enemy_fire_slow_4x` are curriculum aids, not AS parity modes.
 - Player bitmap registration, nested walk cadence, AS casing quirks, and edge `hitCheck` behavior remain uncertain; see `docs/parity_notes.md`.
 - The generated constants file is large and should not be edited manually without a clear reason.
 - Future sessions must check `git status` before editing and avoid reverting user work.
@@ -82,6 +86,11 @@ Last updated: 2026-05-16 Europe/Paris
 ## Manual Control Update
 - `scripts.play_human` supports `F12` screenshots saved as incrementing PNG files under `screenshots/` by default.
 - Debug text is rendered in a right-side panel so it does not cover the game area.
+- Pytest runtime is now ~36s full-suite locally; the slowest remaining tests are the subproc VecEnv smoke, curriculum training smoke, runtime CLI acceptance, and the parallel benchmark orchestration test.
+- Some coverage was shortened by replacing expensive subprocess `--help` loops and full PPO smoke runs with narrower parser-level or direct VecEnv smoke checks.
+- `scripts.watch_model` and `scripts.evaluate_model` now infer experiment config from a model path inside `experiments/.../models/` even when `--experiment` is omitted, preventing env/model observation-shape mismatches for direct experiment model paths.
+- `scripts.watch_model` now renders through `env.unwrapped`, so wrapper-based control modes such as `movement_no_boost_scripted_attack_direct` can still show the GUI debug overlay.
+- Human-friendly numeric CLI parsing now accepts underscore-separated integers and `k`/`M` suffixes for step/timestep style arguments such as `--total-timesteps`, `--eval-freq`, `--max-episode-steps`, `--steps`, and scripted trace frame counts.
 
 ## Handoff Behavior
 - Future Codex sessions should ask clarification questions instead of making hypotheses when requirements are unclear.

@@ -7,11 +7,12 @@ import numpy as np
 
 from ha2_env import HeliAttack2Env
 from ha2_replay import JsonlReplayWriter
+from scripts.runtime_config import parse_human_count
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Record a deterministic random HA2 replay.")
-    parser.add_argument("--steps", type=int, default=300)
+    parser.add_argument("--steps", type=parse_human_count, default=300)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out", type=Path, default=Path("replays/smoke.jsonl"))
     args = parser.parse_args()

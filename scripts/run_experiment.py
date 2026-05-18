@@ -10,22 +10,23 @@ from scripts import evaluate_model
 from scripts.runtime_config import (
     add_runtime_config_args,
     resolve_runtime_config,
+    parse_human_count,
 )
 
 def main(args_list: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Orchestrate HA2 PPO training and evaluation.")
-    parser.add_argument("--total-timesteps", type=int, default=10_000)
+    parser.add_argument("--total-timesteps", type=parse_human_count, default=10_000)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--n-envs", type=int, default=1)
     parser.add_argument("--vec-env", choices=["dummy", "subproc"], default="dummy")
     parser.add_argument("--train-eval", choices=["on", "off"], default="on")
-    parser.add_argument("--eval-freq", type=int, default=None)
-    parser.add_argument("--eval-freq-timesteps", type=int, default=None, help="Evaluation frequency in total timesteps.")
-    parser.add_argument("--train-eval-episodes", type=int, default=5)
+    parser.add_argument("--eval-freq", type=parse_human_count, default=None)
+    parser.add_argument("--eval-freq-timesteps", type=parse_human_count, default=None, help="Evaluation frequency in total timesteps.")
+    parser.add_argument("--train-eval-episodes", type=parse_human_count, default=5)
     parser.add_argument("--eval-vec-env", choices=["dummy", "subproc", "same"], default="dummy")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--wandb", choices=["off", "on"], default="off")
-    parser.add_argument("--eval-episodes", type=int, default=5)
+    parser.add_argument("--eval-episodes", type=parse_human_count, default=5)
     parser.add_argument("--experiment-name", type=str, default=None)
     parser.add_argument("--save-replays", action="store_true")
     add_runtime_config_args(parser)
@@ -51,6 +52,7 @@ def main(args_list: list[str] | None = None) -> None:
         "--wandb", args.wandb,
         "--training-profile", runtime_config.training_profile,
         "--reward-profile", runtime_config.reward_profile,
+        "--pressure-profile", runtime_config.pressure_profile,
         "--control-mode", runtime_config.control_mode,
         "--max-episode-steps", str(runtime_config.max_episode_steps),
         "--no-wandb-finish",
@@ -83,6 +85,7 @@ def main(args_list: list[str] | None = None) -> None:
             "--seed", str(args.seed + 1000),
             "--training-profile", runtime_config.training_profile,
             "--reward-profile", runtime_config.reward_profile,
+            "--pressure-profile", runtime_config.pressure_profile,
             "--control-mode", runtime_config.control_mode,
             "--max-episode-steps", str(runtime_config.max_episode_steps),
         ]
@@ -126,7 +129,12 @@ def main(args_list: list[str] | None = None) -> None:
                 summary_content = f.read()
 
         net_arch = ref_report.get("net_arch", "default")
-        summary_content += f"\n\n## Evaluation Results ({args.eval_episodes} episodes) [net_arch: {net_arch}]\n\n"
+        summary_content += (
+            f"\n\n## Evaluation Results ({args.eval_episodes} episodes) "
+            f"[profile: {ref_report.get('training_profile')}, control: {ref_report.get('control_mode')}, "
+            f"reward: {ref_report.get('reward_profile')}, pressure: {ref_report.get('pressure_profile')}, "
+            f"net_arch: {net_arch}]\n\n"
+        )
         summary_content += "| Metric | Best Model | Latest Model |\n"
         summary_content += "|---|---|---|\n"
 
@@ -266,7 +274,11 @@ def main(args_list: list[str] | None = None) -> None:
                 "summary_update": summary_duration,
                 "wandb_upload": wandb_duration,
                 "diagnostic_bundle": bundle_duration,
-            }
+            },
+            "training_profile": runtime_config.training_profile,
+            "control_mode": runtime_config.control_mode,
+            "reward_profile": runtime_config.reward_profile,
+            "pressure_profile": runtime_config.pressure_profile,
         }
         timing_path = layout.path / "reports" / "timing" / "orchestration_timing.json"
         timing_path.parent.mkdir(parents=True, exist_ok=True)

@@ -20,6 +20,7 @@ from ha2_replay import JsonlReplayWriter
 from scripts.experiment_utils import (
     ExperimentLayout,
     resolve_model_path,
+    resolve_experiment_layout_and_config,
     write_json_file,
 )
 from scripts.runtime_config import (
@@ -156,6 +157,7 @@ def build_evaluation_report(
         "model_choice": effective_model_choice,
         "training_profile": training_profile,
         "reward_profile": experiment_config.get("reward_profile", "combat_default"),
+        "pressure_profile": experiment_config.get("pressure_profile", "normal"),
         "control_mode": control_mode,
         "policy_action_space_nvec": experiment_config.get("policy_action_space_nvec"),
         "sim_action_space_nvec": experiment_config.get("sim_action_space_nvec", FULL_SIM_ACTION_NVEC),
@@ -274,17 +276,10 @@ def main(args_list: list[str] | None = None) -> None:
 
     PPO = _load_ppo()
     effective_model_choice = "path" if args.model is not None else args.model_choice
-    layout = None
-    config = {}
-    if args.experiment is not None:
-        experiment_path = Path(args.experiment)
-        if not experiment_path.exists():
-            raise SystemExit(f"Experiment not found: {experiment_path}")
-        layout = ExperimentLayout(experiment_path.parent, experiment_path)
-        if layout.config_path.exists():
-            import json
-            with open(layout.config_path, "r") as f:
-                config = json.load(f)
+    layout, config = resolve_experiment_layout_and_config(
+        experiment=args.experiment,
+        model=args.model,
+    )
     runtime_config = resolve_runtime_config(args, config)
     for field, (config_value, cli_value) in explicit_runtime_overrides(args, config, runtime_config).items():
         print(f"Runtime override: {field} {config_value!r} -> {cli_value!r}")
@@ -416,6 +411,7 @@ def main(args_list: list[str] | None = None) -> None:
                 "episode": episode,
                 "reward": total_reward,
                 "reward_profile": runtime_config.reward_profile,
+                "pressure_profile": runtime_config.pressure_profile,
                 "reward_breakdown": reward_breakdown_total,
                 "final_reward_breakdown": final_reward_breakdown,
                 "length": length,
@@ -499,6 +495,7 @@ def main(args_list: list[str] | None = None) -> None:
     config = dict(config)
     config["training_profile"] = runtime_config.training_profile
     config["reward_profile"] = runtime_config.reward_profile
+    config["pressure_profile"] = runtime_config.pressure_profile
     config["control_mode"] = runtime_config.control_mode
     config["max_episode_steps"] = runtime_config.max_episode_steps
     config.setdefault("policy_action_space_nvec", runtime_policy_action_space_nvec)

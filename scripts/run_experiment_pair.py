@@ -15,10 +15,13 @@ from ha2_env import TRAINING_PROFILES
 from scripts.runtime_config import (
     DEFAULT_CONTROL_MODE,
     DEFAULT_MAX_EPISODE_STEPS,
+    DEFAULT_PRESSURE_PROFILE,
     DEFAULT_REWARD_PROFILE,
     DEFAULT_TRAINING_PROFILE,
     CONTROL_MODES,
+    PRESSURE_PROFILES,
     REWARD_PROFILES,
+    parse_human_count,
 )
 
 @dataclass
@@ -111,24 +114,27 @@ def main() -> None:
     parser.add_argument("--reward-profile", choices=sorted(REWARD_PROFILES), default=DEFAULT_REWARD_PROFILE, help="Default reward profile for both jobs")
     parser.add_argument("--reward-profile-a", choices=sorted(REWARD_PROFILES), default=None, help="Reward profile for job A (overrides --reward-profile)")
     parser.add_argument("--reward-profile-b", choices=sorted(REWARD_PROFILES), default=None, help="Reward profile for job B (overrides --reward-profile)")
+    parser.add_argument("--pressure-profile", choices=sorted(PRESSURE_PROFILES), default=DEFAULT_PRESSURE_PROFILE, help="Default pressure profile for both jobs")
+    parser.add_argument("--pressure-profile-a", choices=sorted(PRESSURE_PROFILES), default=None, help="Pressure profile for job A (overrides --pressure-profile)")
+    parser.add_argument("--pressure-profile-b", choices=sorted(PRESSURE_PROFILES), default=None, help="Pressure profile for job B (overrides --pressure-profile)")
     parser.add_argument("--label-a", default="job_a")
     parser.add_argument("--label-b", default="job_b")
     parser.add_argument("--seed", type=int, default=0, help="Seed for job A (and job B if --seed-b is not set)")
     parser.add_argument("--seed-b", type=int, default=None, help="Explicit seed for job B. Defaults to the same as --seed.")
-    parser.add_argument("--stagger-seconds", type=int, default=60)
+    parser.add_argument("--stagger-seconds", type=parse_human_count, default=60)
     parser.add_argument("--threads-per-job", default="auto")
     
     # Common forwarded args
-    parser.add_argument("--total-timesteps", type=int, default=10_000)
+    parser.add_argument("--total-timesteps", type=parse_human_count, default=10_000)
     parser.add_argument("--n-envs", type=int, default=1)
     parser.add_argument("--vec-env", default="dummy")
     parser.add_argument("--wandb", default="off")
     parser.add_argument("--train-eval", default="on")
-    parser.add_argument("--eval-freq", type=int, default=None)
-    parser.add_argument("--eval-freq-timesteps", type=int, default=None)
-    parser.add_argument("--train-eval-episodes", type=int, default=5)
-    parser.add_argument("--eval-episodes", type=int, default=5)
-    parser.add_argument("--max-episode-steps", type=int, default=DEFAULT_MAX_EPISODE_STEPS)
+    parser.add_argument("--eval-freq", type=parse_human_count, default=None)
+    parser.add_argument("--eval-freq-timesteps", type=parse_human_count, default=None)
+    parser.add_argument("--train-eval-episodes", type=parse_human_count, default=5)
+    parser.add_argument("--eval-episodes", type=parse_human_count, default=5)
+    parser.add_argument("--max-episode-steps", type=parse_human_count, default=DEFAULT_MAX_EPISODE_STEPS)
     parser.add_argument("--save-replays", action="store_true")
     parser.add_argument("--net-arch", type=str, default=None)
     parser.add_argument("--device", default="auto")
@@ -195,6 +201,8 @@ def main() -> None:
         control_mode_b = args.control_mode_b if args.control_mode_b is not None else args.control_mode
         reward_profile_a = args.reward_profile_a if args.reward_profile_a is not None else args.reward_profile
         reward_profile_b = args.reward_profile_b if args.reward_profile_b is not None else args.reward_profile
+        pressure_profile_a = args.pressure_profile_a if args.pressure_profile_a is not None else args.pressure_profile
+        pressure_profile_b = args.pressure_profile_b if args.pressure_profile_b is not None else args.pressure_profile
 
         # Prevent collisions by always adding timestamp and job suffix
         # Use the same timestamp as the pair folder for consistency
@@ -203,16 +211,18 @@ def main() -> None:
             "--training-profile", args.profile_a,
             "--control-mode", control_mode_a,
             "--reward-profile", reward_profile_a,
+            "--pressure-profile", pressure_profile_a,
             "--seed", str(args.seed),
-            "--experiment-name", f"{ts}_{args.profile_a}_{control_mode_a}_{reward_profile_a}_{args.total_timesteps}_a"
+            "--experiment-name", f"{ts}_{args.profile_a}_{control_mode_a}_{reward_profile_a}_{pressure_profile_a}_{args.total_timesteps}_a"
         ]
         seed_b = args.seed_b if args.seed_b is not None else args.seed
         args_b = common_args + [
             "--training-profile", args.profile_b,
             "--control-mode", control_mode_b,
             "--reward-profile", reward_profile_b,
+            "--pressure-profile", pressure_profile_b,
             "--seed", str(seed_b),
-            "--experiment-name", f"{ts}_{args.profile_b}_{control_mode_b}_{reward_profile_b}_{args.total_timesteps}_b"
+            "--experiment-name", f"{ts}_{args.profile_b}_{control_mode_b}_{reward_profile_b}_{pressure_profile_b}_{args.total_timesteps}_b"
         ]
 
         mode_results = {}
@@ -364,6 +374,16 @@ def main() -> None:
     serializable_results = {}
     for mode, data in results.items():
         serializable_results[mode] = {k: (asdict(v) if isinstance(v, JobResult) else v) for k, v in data.items()}
+    serializable_results["_metadata"] = {
+        "profile_a": args.profile_a,
+        "profile_b": args.profile_b,
+        "control_mode_a": args.control_mode_a or args.control_mode,
+        "control_mode_b": args.control_mode_b or args.control_mode,
+        "reward_profile_a": args.reward_profile_a or args.reward_profile,
+        "reward_profile_b": args.reward_profile_b or args.reward_profile,
+        "pressure_profile_a": args.pressure_profile_a or args.pressure_profile,
+        "pressure_profile_b": args.pressure_profile_b or args.pressure_profile,
+    }
     
     with open(summary_path, "w") as f:
         json.dump(serializable_results, f, indent=2)
@@ -375,6 +395,8 @@ def main() -> None:
     seed_b_val = args.seed_b if args.seed_b is not None else args.seed
     md_lines.append(f"- Job A Seed: {args.seed}")
     md_lines.append(f"- Job B Seed: {seed_b_val}")
+    md_lines.append(f"- Job A Profile: training `{args.profile_a}`, control `{args.control_mode_a or args.control_mode}`, reward `{args.reward_profile_a or args.reward_profile}`, pressure `{args.pressure_profile_a or args.pressure_profile}`")
+    md_lines.append(f"- Job B Profile: training `{args.profile_b}`, control `{args.control_mode_b or args.control_mode}`, reward `{args.reward_profile_b or args.reward_profile}`, pressure `{args.pressure_profile_b or args.pressure_profile}`")
     md_lines.append("")
     
     if "sequential" in results:

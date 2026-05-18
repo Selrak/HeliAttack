@@ -154,6 +154,7 @@ def test_evaluation_report_defensive_metrics_handle_no_damage(tmp_path):
     assert report["metrics"]["longest_damage_free_streak"]["mean"] == 20.0
     assert report["reward_breakdown"]["living"]["sum"] == 0.2
     assert report["reward_breakdown"]["player_damage"]["sum"] == 0.0
+    assert report["pressure_profile"] == "normal"
 
 
 def test_run_experiment_forwards_reward_profile_to_final_eval(tmp_path, monkeypatch):
@@ -167,6 +168,8 @@ def test_run_experiment_forwards_reward_profile_to_final_eval(tmp_path, monkeypa
     def fake_train(args_list):
         assert "--reward-profile" in args_list
         assert args_list[args_list.index("--reward-profile") + 1] == "defense_v1"
+        assert "--pressure-profile" in args_list
+        assert args_list[args_list.index("--pressure-profile") + 1] == "enemy_fire_slow_4x"
         return layout
 
     eval_calls = []
@@ -175,6 +178,8 @@ def test_run_experiment_forwards_reward_profile_to_final_eval(tmp_path, monkeypa
         eval_calls.append(args_list)
         assert "--reward-profile" in args_list
         assert args_list[args_list.index("--reward-profile") + 1] == "defense_v1"
+        assert "--pressure-profile" in args_list
+        assert args_list[args_list.index("--pressure-profile") + 1] == "enemy_fire_slow_4x"
         model_choice = args_list[args_list.index("--model-choice") + 1]
         report = {
             "metrics": {
@@ -211,6 +216,10 @@ def test_run_experiment_forwards_reward_profile_to_final_eval(tmp_path, monkeypa
                 "right_edge_camping_rate": 0.0,
             },
             "net_arch": "test",
+            "training_profile": "combat_v1",
+            "control_mode": "full",
+            "reward_profile": "defense_v1",
+            "pressure_profile": "enemy_fire_slow_4x",
         }
         write_json_file(layout.report_path(model_choice), report)
 
@@ -221,6 +230,8 @@ def test_run_experiment_forwards_reward_profile_to_final_eval(tmp_path, monkeypa
         [
             "--reward-profile",
             "defense_v1",
+            "--pressure-profile",
+            "enemy_fire_slow_4x",
             "--train-eval",
             "off",
             "--eval-episodes",

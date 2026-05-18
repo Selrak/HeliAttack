@@ -38,7 +38,7 @@ def test_movement_diagnostics_keys_exist():
     keys = [
         "frames_grounded", "frames_airborne", "frames_boost_ready",
         "frames_boost_pressed", "boost_activations", "frames_jump_pressed",
-        "min_player_x", "max_player_x"
+        "min_player_x", "max_player_x", "player_x_range",
     ]
     for k in keys:
         assert k in info, f"Missing movement diagnostic key: {k}"

@@ -293,6 +293,33 @@ def resolve_model_path(
     return layout.model_path(model_choice)
 
 
+def resolve_experiment_layout_and_config(
+    *,
+    experiment: Path | None,
+    model: Path | None,
+) -> tuple[ExperimentLayout | None, dict[str, object]]:
+    layout = None
+    config: dict[str, object] = {}
+    experiment_path: Path | None = None
+    if experiment is not None:
+        experiment_path = Path(experiment)
+    elif model is not None:
+        model_path = Path(model)
+        candidate_experiment = model_path.parent.parent
+        if model_path.parent.name == "models" and (candidate_experiment / "config.json").exists():
+            experiment_path = candidate_experiment
+
+    if experiment_path is None:
+        return None, config
+    if not experiment_path.exists():
+        raise SystemExit(f"Experiment not found: {experiment_path}")
+
+    layout = ExperimentLayout(experiment_path.parent, experiment_path)
+    if layout.config_path.exists():
+        config = json.loads(layout.config_path.read_text(encoding="utf-8"))
+    return layout, config
+
+
 def unique_timestamped_path(directory: Path, stem: str, suffix: str, timestamp: str | None = None) -> Path:
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)

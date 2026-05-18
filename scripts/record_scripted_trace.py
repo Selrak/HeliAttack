@@ -11,6 +11,7 @@ import pygame
 
 from ha2_env import HeliAttack2Env
 from ha2_replay import JsonlReplayWriter, verify_replay_file
+from scripts.runtime_config import parse_human_count
 
 
 Action = list[int]
@@ -410,7 +411,7 @@ def main() -> None:
     parser.add_argument("--scenario", type=scenario_names, default=list(SCENARIOS))
     parser.add_argument("--out-dir", type=Path, default=Path("reports/parity_traces"))
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--frames", type=int, help="Override scenario frame count.")
+    parser.add_argument("--frames", type=parse_human_count, help="Override scenario frame count.")
     parser.add_argument("--no-screenshots", action="store_true")
     parser.add_argument("--gif", action="store_true", help="Also write selected-frame GIFs.")
     args = parser.parse_args()

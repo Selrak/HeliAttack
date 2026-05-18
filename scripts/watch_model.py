@@ -7,6 +7,7 @@ from pathlib import Path
 from scripts.experiment_utils import (
     ExperimentLayout,
     resolve_model_path,
+    resolve_experiment_layout_and_config,
     unique_timestamped_path,
 )
 from scripts.runtime_config import (
@@ -49,17 +50,10 @@ def main(args_list: list[str] | None = None) -> None:
     args = parser.parse_args(args_list)
 
     effective_model_choice = "path" if args.model is not None else args.model_choice
-    layout = None
-    config = {}
-    if args.experiment is not None:
-        experiment_path = Path(args.experiment)
-        if not experiment_path.exists():
-            raise SystemExit(f"Experiment not found: {experiment_path}")
-        layout = ExperimentLayout(experiment_path.parent, experiment_path)
-        if layout.config_path.exists():
-            import json
-            with open(layout.config_path, "r") as f:
-                config = json.load(f)
+    layout, config = resolve_experiment_layout_and_config(
+        experiment=args.experiment,
+        model=args.model,
+    )
     runtime_config = resolve_runtime_config(args, config)
     for field, (config_value, cli_value) in explicit_runtime_overrides(args, config, runtime_config).items():
         print(f"Runtime override: {field} {config_value!r} -> {cli_value!r}")
@@ -86,6 +80,7 @@ def main(args_list: list[str] | None = None) -> None:
         auto_render=False,
         **runtime_env_kwargs(runtime_config),
     )
+    base_env = env.unwrapped
     obs, _info = env.reset(seed=args.seed)
     writer = None
     replay_path = None
@@ -119,10 +114,15 @@ def main(args_list: list[str] | None = None) -> None:
     fast_forward = False
     running = True
 
-    env.render(
+    base_env.render(
         debug_overlay=True,
         debug_collision=False,
-        debug_lines=[f"model={model_path.name}", "initializing", "Esc quit"],
+        debug_lines=[
+            f"model={model_path.name}",
+            f"pressure={runtime_config.pressure_profile}",
+            "initializing",
+            "Esc quit",
+        ],
     )
 
     try:
@@ -153,11 +153,12 @@ def main(args_list: list[str] | None = None) -> None:
                     full_action=full_action,
                     control_mode=runtime_config.control_mode,
                 )
-            env.render(
+            base_env.render(
                 debug_overlay=True,
                 debug_collision=False,
                 debug_lines=[
                     f"model={model_path.name}",
+                    f"pressure={runtime_config.pressure_profile}",
                     f"fast={fast_forward}",
                     "controls: F fast-forward Esc quit",
                 ],

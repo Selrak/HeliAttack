@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+import sys
+from types import ModuleType
 
 from ha2_env import HeliAttack2Env
 from ha2_replay import JsonlReplayWriter, load_replay
@@ -37,18 +39,39 @@ def test_reward_profiles_change_actual_player_damage_reward():
 
 
 def test_env_factory_forwards_reward_profile():
-    pytest.importorskip("stable_baselines3")
+    monitor_module = ModuleType("stable_baselines3.common.monitor")
+
+    class FakeMonitor:
+        def __init__(self, env):
+            self.env = env
+            self.unwrapped = env.unwrapped
+
+        def close(self):
+            return self.env.close()
+
+    monitor_module.Monitor = FakeMonitor
+    common_module = ModuleType("stable_baselines3.common")
+    stable_module = ModuleType("stable_baselines3")
+    common_module.monitor = monitor_module
+    stable_module.common = common_module
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setitem(sys.modules, "stable_baselines3", stable_module)
+    monkeypatch.setitem(sys.modules, "stable_baselines3.common", common_module)
+    monkeypatch.setitem(sys.modules, "stable_baselines3.common.monitor", monitor_module)
     env = EnvFactory(
         rank=0,
         seed=7,
         training_profile="combat_v1",
         max_episode_steps=40,
         reward_profile="defense_v1",
+        pressure_profile="enemy_fire_slow_2x",
     )()
     try:
         assert env.unwrapped.reward_profile == "defense_v1"
+        assert env.unwrapped.pressure_profile == "enemy_fire_slow_2x"
     finally:
         env.close()
+        monkeypatch.undo()
 
 
 def test_replay_records_reward_profile_and_breakdown(tmp_path):
