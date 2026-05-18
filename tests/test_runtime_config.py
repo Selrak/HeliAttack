@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from pathlib import Path
 
 import numpy as np
+import pytest
 from gymnasium import spaces
 
 from scripts.runtime_config import (
@@ -144,6 +145,74 @@ class FakeEnv:
 
     def render(self, **kwargs):
         return None
+
+    def close(self):
+        return None
+
+
+class FakeTrainPolicy:
+    activation_fn = type("FakeActivation", (), {})
+
+    def parameters(self):
+        return []
+
+
+class FakeTrainModel:
+    action_space = spaces.MultiDiscrete([3, 2, 2])
+    observation_space = spaces.Box(
+        low=-np.ones(84, dtype=np.float32),
+        high=np.ones(84, dtype=np.float32),
+        dtype=np.float32,
+    )
+    learn_calls: list[dict] = []
+
+    def __init__(self):
+        self.policy = FakeTrainPolicy()
+        self.tensorboard_log = None
+        self.env = None
+
+    def set_env(self, env):
+        self.env = env
+
+    def learn(self, total_timesteps, callback=None, reset_num_timesteps=True):
+        self.learn_calls.append(
+            {
+                "total_timesteps": total_timesteps,
+                "reset_num_timesteps": reset_num_timesteps,
+            }
+        )
+        return self
+
+    def save(self, path):
+        path = Path(path)
+        if path.suffix != ".zip":
+            path = path.with_suffix(".zip")
+        path.write_text("model", encoding="utf-8")
+
+
+class FakeTrainPPO:
+    @staticmethod
+    def load(path, **kwargs):
+        return FakeTrainModel()
+
+
+class FakeCheckpointCallback:
+    def __init__(self, *args, **kwargs):
+        pass
+
+
+class FakeEvalCallback:
+    def __init__(self, *args, **kwargs):
+        pass
+
+
+class FakeVecEnv:
+    action_space = spaces.MultiDiscrete([3, 2, 2])
+    observation_space = spaces.Box(
+        low=-np.ones(84, dtype=np.float32),
+        high=np.ones(84, dtype=np.float32),
+        dtype=np.float32,
+    )
 
     def close(self):
         return None
@@ -321,6 +390,218 @@ def test_watch_model_infers_runtime_config_from_experiment(tmp_path, monkeypatch
     assert seen_kwargs[0]["max_episode_steps"] == 222
 
 
+def test_train_parkour_resume_writes_lineage_and_uses_no_reset_default(tmp_path, monkeypatch):
+    from scripts import train_parkour
+
+    parent = tmp_path / "parent_exp"
+    parent_models = parent / "models"
+    parent_models.mkdir(parents=True)
+    parent_model = parent_models / "latest.zip"
+    parent_model.write_text("model", encoding="utf-8")
+    (parent / "config.json").write_text(
+        json.dumps(
+            {
+                "training_profile": "combat_bullets_v1",
+                "control_mode": "movement_no_boost_scripted_attack_direct",
+                "reward_profile": "defense_v1",
+                "pressure_profile": "enemy_fire_slow_4x",
+            }
+        ),
+        encoding="utf-8",
+    )
+    FakeTrainModel.learn_calls.clear()
+    monkeypatch.setattr(
+        train_parkour,
+        "_load_sb3",
+        lambda: (FakeTrainPPO, FakeCheckpointCallback, FakeEvalCallback, object, object, object),
+    )
+    monkeypatch.setattr(train_parkour, "make_vec_env", lambda **kwargs: FakeVecEnv())
+
+    layout = train_parkour.main(
+        [
+            "--experiments-root",
+            str(tmp_path / "experiments"),
+            "--experiment-name",
+            "child_resume",
+            "--resume-from",
+            str(parent_model),
+            "--total-timesteps",
+            "5",
+            "--train-eval",
+            "off",
+            "--wandb",
+            "off",
+            "--training-profile",
+            "combat_bullets_v1",
+            "--control-mode",
+            "movement_no_boost_scripted_attack_direct",
+            "--reward-profile",
+            "defense_v1",
+            "--pressure-profile",
+            "enemy_fire_slow_2x",
+        ]
+    )
+
+    config = json.loads(layout.config_path.read_text(encoding="utf-8"))
+    summary = layout.summary_path.read_text(encoding="utf-8")
+    assert layout.path != parent
+    assert config["resume_from"] == str(parent_model)
+    assert config["parent_experiment_dir"] == str(parent)
+    assert config["parent_training_profile"] == "combat_bullets_v1"
+    assert config["parent_control_mode"] == "movement_no_boost_scripted_attack_direct"
+    assert config["parent_reward_profile"] == "defense_v1"
+    assert config["parent_pressure_profile"] == "enemy_fire_slow_4x"
+    assert config["reset_num_timesteps"] is False
+    assert config["fine_tune_timesteps"] == 5
+    assert FakeTrainModel.learn_calls[-1]["reset_num_timesteps"] is False
+    assert "resume_from" in summary
+    assert "fine_tune_timesteps" in summary
+
+
+def test_train_parkour_resume_rejects_incompatible_action_space(tmp_path, monkeypatch):
+    from scripts import train_parkour
+
+    parent_model = tmp_path / "model.zip"
+    parent_model.write_text("model", encoding="utf-8")
+    original_action_space = FakeTrainModel.action_space
+    FakeTrainModel.action_space = spaces.MultiDiscrete([3, 2, 2, 2, 32, 2])
+    monkeypatch.setattr(
+        train_parkour,
+        "_load_sb3",
+        lambda: (FakeTrainPPO, FakeCheckpointCallback, FakeEvalCallback, object, object, object),
+    )
+    monkeypatch.setattr(train_parkour, "make_vec_env", lambda **kwargs: FakeVecEnv())
+    try:
+        try:
+            train_parkour.main(
+                [
+                    "--experiments-root",
+                    str(tmp_path / "experiments"),
+                    "--experiment-name",
+                    "bad_resume",
+                    "--resume-from",
+                    str(parent_model),
+                    "--total-timesteps",
+                    "1",
+                    "--train-eval",
+                    "off",
+                    "--training-profile",
+                    "combat_bullets_v1",
+                    "--control-mode",
+                    "movement_no_boost_scripted_attack_direct",
+                ]
+            )
+        except SystemExit as exc:
+            assert "Cannot resume model with action_space" in str(exc)
+        else:
+            raise AssertionError("Expected incompatible resume to fail")
+    finally:
+        FakeTrainModel.action_space = original_action_space
+
+
+def test_run_experiment_forwards_resume_args(tmp_path, monkeypatch):
+    from scripts import run_experiment
+    from scripts.experiment_utils import ExperimentLayout, write_json_file, write_text_file
+
+    captured_train_args = []
+    parent_model = tmp_path / "parent" / "models" / "latest.zip"
+    parent_model.parent.mkdir(parents=True)
+    parent_model.write_text("model", encoding="utf-8")
+    exp_dir = Path("experiments") / "resume_orchestration"
+
+    def fake_train_main(args_list):
+        captured_train_args.extend(args_list)
+        layout = ExperimentLayout(Path("experiments"), exp_dir)
+        layout.ensure_directories()
+        write_json_file(
+            layout.config_path,
+            {
+                "training_profile": "combat_bullets_v1",
+                "control_mode": "movement_no_boost_scripted_attack_direct",
+                "reward_profile": "defense_v1",
+                "pressure_profile": "enemy_fire_slow_2x",
+                "resume_from": str(parent_model),
+                "reset_num_timesteps": False,
+                "fine_tune_timesteps": 5,
+            },
+        )
+        write_text_file(layout.summary_path, "# Summary\n", allow_overwrite=True)
+        write_text_file(layout.git_info_path, "git unavailable\n", allow_overwrite=True)
+        write_text_file(layout.models_dir / "latest.zip", "model", allow_overwrite=True)
+        return layout
+
+    def fake_eval_main(args_list):
+        report_path = exp_dir / "reports" / "eval_latest.json"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            json.dumps(
+                {
+                    "training_profile": "combat_bullets_v1",
+                    "control_mode": "movement_no_boost_scripted_attack_direct",
+                    "reward_profile": "defense_v1",
+                    "pressure_profile": "enemy_fire_slow_2x",
+                    "metrics": {
+                        "reward": {"mean": 0.0},
+                        "length": {"mean": 1.0},
+                        "heli_kills": {"mean": 0.0},
+                        "player_damage": {"mean": 0.0},
+                        "final_score": {"mean": 0.0},
+                    },
+                    "rates": {"hit_rate": 0.0, "death_rate": 0.0, "timeout_rate": 0.0},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(run_experiment.train_parkour, "main", fake_train_main)
+    monkeypatch.setattr(run_experiment.evaluate_model, "main", fake_eval_main)
+
+    run_experiment.main(
+        [
+            "--experiment-name",
+            "resume_orchestration",
+            "--resume-from",
+            str(parent_model),
+            "--total-timesteps",
+            "5",
+            "--train-eval",
+            "off",
+            "--eval-episodes",
+            "1",
+            "--training-profile",
+            "combat_bullets_v1",
+            "--control-mode",
+            "movement_no_boost_scripted_attack_direct",
+            "--reward-profile",
+            "defense_v1",
+            "--pressure-profile",
+            "enemy_fire_slow_2x",
+        ]
+    )
+
+    assert captured_train_args[captured_train_args.index("--resume-from") + 1] == str(parent_model)
+    assert "--no-reset-num-timesteps" in captured_train_args
+
+
+def test_run_experiment_rejects_net_arch_with_resume(tmp_path):
+    from scripts import run_experiment
+
+    parent_model = tmp_path / "parent" / "models" / "latest.zip"
+    parent_model.parent.mkdir(parents=True)
+    parent_model.write_text("model", encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="--net-arch cannot be used"):
+        run_experiment.main(
+            [
+                "--resume-from",
+                str(parent_model),
+                "--net-arch",
+                "128,128",
+            ]
+        )
+
+
 def test_runtime_args_are_accepted_by_user_scripts():
     scripts = [
         "scripts.play_human",
@@ -387,3 +668,63 @@ def test_run_experiment_pair_forwards_pressure_profiles(tmp_path, monkeypatch):
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     assert summary["_metadata"]["pressure_profile_a"] == "enemy_fire_slow_2x"
     assert summary["_metadata"]["pressure_profile_b"] == "enemy_fire_slow_4x"
+
+
+def test_run_experiment_pair_forwards_resume_paths_and_reset_overrides(tmp_path, monkeypatch):
+    from scripts import run_experiment_pair
+
+    calls = []
+    common_parent = tmp_path / "common" / "models" / "latest.zip"
+    parent_b = tmp_path / "parent_b" / "models" / "latest.zip"
+    common_parent.parent.mkdir(parents=True)
+    parent_b.parent.mkdir(parents=True)
+    common_parent.write_text("model", encoding="utf-8")
+    parent_b.write_text("model", encoding="utf-8")
+
+    def fake_run_job(name, args, env, log_dir):
+        calls.append((name, list(args)))
+        return run_experiment_pair.JobResult(
+            command=[sys.executable, "-m", "scripts.run_experiment", *args],
+            stdout_log=str(Path(log_dir) / f"{name}.stdout.log"),
+            stderr_log=str(Path(log_dir) / f"{name}.stderr.log"),
+            exit_code=0,
+            experiment_path=str(tmp_path / name),
+        )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(run_experiment_pair, "run_job", fake_run_job)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_experiment_pair",
+            "--mode",
+            "sequential",
+            "--resume-from",
+            str(common_parent),
+            "--resume-from-b",
+            str(parent_b),
+            "--no-reset-num-timesteps",
+            "--reset-num-timesteps-b",
+            "--total-timesteps",
+            "7",
+            "--stagger-seconds",
+            "0",
+        ],
+    )
+
+    run_experiment_pair.main()
+
+    args_a = calls[0][1]
+    args_b = calls[1][1]
+    assert args_a[args_a.index("--resume-from") + 1] == str(common_parent)
+    assert "--no-reset-num-timesteps" in args_a
+    assert args_b[args_b.index("--resume-from") + 1] == str(parent_b)
+    assert "--reset-num-timesteps" in args_b
+    summary_path = next((tmp_path / "experiments").glob("pair_*/pair_summary.json"))
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    assert summary["_metadata"]["resume_a"]["resume_from"] == str(common_parent)
+    assert summary["_metadata"]["resume_a"]["reset_num_timesteps"] is False
+    assert summary["_metadata"]["resume_a"]["fine_tune_timesteps"] == 7
+    assert summary["_metadata"]["resume_b"]["resume_from"] == str(parent_b)
+    assert summary["_metadata"]["resume_b"]["reset_num_timesteps"] is True

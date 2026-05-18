@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import List, Dict
 
 from ha2_env import TRAINING_PROFILES
+from scripts.experiment_utils import resume_lineage
 from scripts.runtime_config import (
     DEFAULT_CONTROL_MODE,
     DEFAULT_MAX_EPISODE_STEPS,
@@ -137,10 +138,35 @@ def main() -> None:
     parser.add_argument("--max-episode-steps", type=parse_human_count, default=DEFAULT_MAX_EPISODE_STEPS)
     parser.add_argument("--save-replays", action="store_true")
     parser.add_argument("--net-arch", type=str, default=None)
+    parser.add_argument("--resume-from", type=Path, default=None)
+    parser.add_argument("--resume-from-a", type=Path, default=None)
+    parser.add_argument("--resume-from-b", type=Path, default=None)
+    parser.add_argument("--reset-num-timesteps", dest="reset_num_timesteps", action="store_true", default=None)
+    parser.add_argument("--no-reset-num-timesteps", dest="reset_num_timesteps", action="store_false")
+    parser.add_argument("--reset-num-timesteps-a", dest="reset_num_timesteps_a", action="store_true", default=None)
+    parser.add_argument("--no-reset-num-timesteps-a", dest="reset_num_timesteps_a", action="store_false")
+    parser.add_argument("--reset-num-timesteps-b", dest="reset_num_timesteps_b", action="store_true", default=None)
+    parser.add_argument("--no-reset-num-timesteps-b", dest="reset_num_timesteps_b", action="store_false")
     parser.add_argument("--device", default="auto")
     parser.add_argument("--timing-profile", default="on")
     
     args = parser.parse_args()
+    resume_from_a = args.resume_from_a if args.resume_from_a is not None else args.resume_from
+    resume_from_b = args.resume_from_b if args.resume_from_b is not None else args.resume_from
+    reset_num_timesteps_a = (
+        args.reset_num_timesteps_a
+        if args.reset_num_timesteps_a is not None
+        else args.reset_num_timesteps
+    )
+    reset_num_timesteps_b = (
+        args.reset_num_timesteps_b
+        if args.reset_num_timesteps_b is not None
+        else args.reset_num_timesteps
+    )
+    effective_reset_a = bool(reset_num_timesteps_a) if reset_num_timesteps_a is not None else resume_from_a is None
+    effective_reset_b = bool(reset_num_timesteps_b) if reset_num_timesteps_b is not None else resume_from_b is None
+    if args.net_arch is not None and (resume_from_a is not None or resume_from_b is not None):
+        raise SystemExit("--net-arch cannot be used with resume; the loaded model architecture is authoritative.")
 
     num_threads = get_auto_threads() if args.threads_per_job == "auto" else int(args.threads_per_job)
     thread_env = create_thread_env(num_threads)
@@ -191,6 +217,11 @@ def main() -> None:
     if args.save_replays:
         common_args.append("--save-replays")
 
+    def append_resume_args(job_args: list[str], resume_from: Path | None, reset_num_timesteps: bool) -> None:
+        if resume_from is not None:
+            job_args.extend(["--resume-from", str(resume_from)])
+        job_args.append("--reset-num-timesteps" if reset_num_timesteps else "--no-reset-num-timesteps")
+
     results = {}
 
     def run_pair(mode_name: str) -> Dict[str, JobResult]:
@@ -215,6 +246,7 @@ def main() -> None:
             "--seed", str(args.seed),
             "--experiment-name", f"{ts}_{args.profile_a}_{control_mode_a}_{reward_profile_a}_{pressure_profile_a}_{args.total_timesteps}_a"
         ]
+        append_resume_args(args_a, resume_from_a, effective_reset_a)
         seed_b = args.seed_b if args.seed_b is not None else args.seed
         args_b = common_args + [
             "--training-profile", args.profile_b,
@@ -224,6 +256,7 @@ def main() -> None:
             "--seed", str(seed_b),
             "--experiment-name", f"{ts}_{args.profile_b}_{control_mode_b}_{reward_profile_b}_{pressure_profile_b}_{args.total_timesteps}_b"
         ]
+        append_resume_args(args_b, resume_from_b, effective_reset_b)
 
         mode_results = {}
         if mode_name == "sequential":
@@ -383,6 +416,16 @@ def main() -> None:
         "reward_profile_b": args.reward_profile_b or args.reward_profile,
         "pressure_profile_a": args.pressure_profile_a or args.pressure_profile,
         "pressure_profile_b": args.pressure_profile_b or args.pressure_profile,
+        "resume_a": resume_lineage(
+            resume_from=resume_from_a,
+            reset_num_timesteps=effective_reset_a,
+            fine_tune_timesteps=args.total_timesteps if resume_from_a is not None else None,
+        ),
+        "resume_b": resume_lineage(
+            resume_from=resume_from_b,
+            reset_num_timesteps=effective_reset_b,
+            fine_tune_timesteps=args.total_timesteps if resume_from_b is not None else None,
+        ),
     }
     
     with open(summary_path, "w") as f:
@@ -397,6 +440,8 @@ def main() -> None:
     md_lines.append(f"- Job B Seed: {seed_b_val}")
     md_lines.append(f"- Job A Profile: training `{args.profile_a}`, control `{args.control_mode_a or args.control_mode}`, reward `{args.reward_profile_a or args.reward_profile}`, pressure `{args.pressure_profile_a or args.pressure_profile}`")
     md_lines.append(f"- Job B Profile: training `{args.profile_b}`, control `{args.control_mode_b or args.control_mode}`, reward `{args.reward_profile_b or args.reward_profile}`, pressure `{args.pressure_profile_b or args.pressure_profile}`")
+    md_lines.append(f"- Job A Resume: `{resume_from_a if resume_from_a is not None else 'none'}`, reset_num_timesteps `{effective_reset_a}`")
+    md_lines.append(f"- Job B Resume: `{resume_from_b if resume_from_b is not None else 'none'}`, reset_num_timesteps `{effective_reset_b}`")
     md_lines.append("")
     
     if "sequential" in results:

@@ -320,6 +320,46 @@ def resolve_experiment_layout_and_config(
     return layout, config
 
 
+def resume_lineage(
+    *,
+    resume_from: Path | None,
+    reset_num_timesteps: bool,
+    fine_tune_timesteps: int | None,
+) -> dict[str, object]:
+    lineage: dict[str, object] = {
+        "resume_from": str(resume_from) if resume_from is not None else None,
+        "parent_model_path": str(resume_from) if resume_from is not None else None,
+        "parent_experiment_dir": None,
+        "parent_config_path": None,
+        "parent_training_profile": None,
+        "parent_control_mode": None,
+        "parent_reward_profile": None,
+        "parent_pressure_profile": None,
+        "reset_num_timesteps": bool(reset_num_timesteps),
+        "fine_tune_timesteps": int(fine_tune_timesteps) if fine_tune_timesteps is not None else None,
+        "parent_config_inferred": False,
+    }
+    if resume_from is None:
+        return lineage
+
+    layout, config = resolve_experiment_layout_and_config(experiment=None, model=resume_from)
+    if layout is None:
+        return lineage
+
+    lineage.update(
+        {
+            "parent_experiment_dir": str(layout.path),
+            "parent_config_path": str(layout.config_path) if layout.config_path.exists() else None,
+            "parent_training_profile": config.get("training_profile"),
+            "parent_control_mode": config.get("control_mode"),
+            "parent_reward_profile": config.get("reward_profile"),
+            "parent_pressure_profile": config.get("pressure_profile"),
+            "parent_config_inferred": bool(config),
+        }
+    )
+    return lineage
+
+
 def unique_timestamped_path(directory: Path, stem: str, suffix: str, timestamp: str | None = None) -> Path:
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)

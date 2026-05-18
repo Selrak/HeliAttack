@@ -31,11 +31,21 @@ def main(args_list: list[str] | None = None) -> None:
     parser.add_argument("--save-replays", action="store_true")
     add_runtime_config_args(parser)
     parser.add_argument("--watch", action="store_true")
+    parser.add_argument("--resume-from", type=Path, default=None)
+    parser.add_argument("--reset-num-timesteps", dest="reset_num_timesteps", action="store_true", default=None)
+    parser.add_argument("--no-reset-num-timesteps", dest="reset_num_timesteps", action="store_false")
     parser.add_argument("--net-arch", type=str, default=None, help="Comma-separated list of hidden layer sizes (e.g. '128,128')")
     parser.add_argument("--timing-profile", choices=["on", "off"], default="off")
     parser.add_argument("--torch-num-threads", type=int, default=None)
     args = parser.parse_args(args_list)
     runtime_config = resolve_runtime_config(args)
+    effective_reset_num_timesteps = (
+        bool(args.reset_num_timesteps)
+        if args.reset_num_timesteps is not None
+        else args.resume_from is None
+    )
+    if args.resume_from is not None and args.net_arch is not None:
+        raise SystemExit("--net-arch cannot be used with --resume-from; the loaded model architecture is authoritative.")
 
     import time
     orchestration_start = time.perf_counter()
@@ -62,6 +72,9 @@ def main(args_list: list[str] | None = None) -> None:
         train_args.extend(["--net-arch", args.net_arch])
     if args.torch_num_threads is not None:
         train_args.extend(["--torch-num-threads", str(args.torch_num_threads)])
+    if args.resume_from is not None:
+        train_args.extend(["--resume-from", str(args.resume_from)])
+    train_args.append("--reset-num-timesteps" if effective_reset_num_timesteps else "--no-reset-num-timesteps")
     if args.eval_freq is not None:
         train_args.extend(["--eval-freq", str(args.eval_freq)])
     if args.eval_freq_timesteps is not None:
@@ -279,6 +292,9 @@ def main(args_list: list[str] | None = None) -> None:
             "control_mode": runtime_config.control_mode,
             "reward_profile": runtime_config.reward_profile,
             "pressure_profile": runtime_config.pressure_profile,
+            "resume_from": str(args.resume_from) if args.resume_from is not None else None,
+            "reset_num_timesteps": effective_reset_num_timesteps,
+            "fine_tune_timesteps": int(args.total_timesteps) if args.resume_from is not None else None,
         }
         timing_path = layout.path / "reports" / "timing" / "orchestration_timing.json"
         timing_path.parent.mkdir(parents=True, exist_ok=True)

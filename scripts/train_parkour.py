@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import shutil
 
+import numpy as np
+
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -20,6 +22,7 @@ from ha2_env import (
 from scripts.experiment_utils import (
     create_experiment_layout,
     git_info_text,
+    resume_lineage,
     write_json_file,
     write_text_file,
 )
@@ -112,6 +115,40 @@ def effective_eval_vec_env(train_vec_env: str, eval_vec_env: str) -> str:
         return train_vec_env
     return eval_vec_env
 
+
+def _space_description(space) -> str:
+    if hasattr(space, "nvec"):
+        return f"{space.__class__.__name__}(nvec={np.asarray(space.nvec, dtype=int).tolist()})"
+    if hasattr(space, "shape"):
+        return f"{space.__class__.__name__}(shape={space.shape}, dtype={getattr(space, 'dtype', None)})"
+    return repr(space)
+
+
+def _spaces_match(model_space, env_space) -> bool:
+    if model_space.__class__ is not env_space.__class__:
+        return False
+    if hasattr(model_space, "nvec") and hasattr(env_space, "nvec"):
+        return bool(np.array_equal(model_space.nvec, env_space.nvec))
+    if hasattr(model_space, "shape") and hasattr(env_space, "shape"):
+        return model_space.shape == env_space.shape and getattr(model_space, "dtype", None) == getattr(env_space, "dtype", None)
+    return model_space == env_space
+
+
+def validate_resume_compatibility(model, env, runtime_config: RuntimeConfig) -> None:
+    if not _spaces_match(model.action_space, env.action_space):
+        raise SystemExit(
+            "Cannot resume model with action_space "
+            f"{_space_description(model.action_space)} under control_mode "
+            f"{runtime_config.control_mode}; expected {_space_description(env.action_space)}."
+        )
+    if not _spaces_match(model.observation_space, env.observation_space):
+        raise SystemExit(
+            "Cannot resume model with observation_space "
+            f"{_space_description(model.observation_space)} under training_profile "
+            f"{runtime_config.training_profile}; expected {_space_description(env.observation_space)}."
+        )
+
+
 def main(args_list: list[str] | None = None) -> ExperimentLayout:
     parser = argparse.ArgumentParser(description="Minimal HA2 parkour PPO training.")
     parser.add_argument("--total-timesteps", type=parse_human_count, default=10_000)
@@ -137,6 +174,8 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
     parser.add_argument("--experiment-dir", type=Path, default=None)
     parser.add_argument("--experiment-name", type=str, default=None)
     parser.add_argument("--resume-from", type=Path, default=None)
+    parser.add_argument("--reset-num-timesteps", dest="reset_num_timesteps", action="store_true", default=None)
+    parser.add_argument("--no-reset-num-timesteps", dest="reset_num_timesteps", action="store_false")
     parser.add_argument("--no-wandb-finish", action="store_true", help="Skip artifact upload and wandb finish (for orchestration).")
     parser.add_argument("--mirror-root-models", action="store_true")
     parser.add_argument("--net-arch", type=str, default=None, help="Comma-separated list of hidden layer sizes (e.g. '128,128')")
@@ -144,6 +183,13 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
     parser.add_argument("--torch-num-threads", type=int, default=None)
     args = parser.parse_args(args_list)
     runtime_config = resolve_runtime_config(args)
+    effective_reset_num_timesteps = (
+        bool(args.reset_num_timesteps)
+        if args.reset_num_timesteps is not None
+        else args.resume_from is None
+    )
+    if args.resume_from is not None and args.net_arch is not None:
+        raise SystemExit("--net-arch cannot be used with --resume-from; the loaded model architecture is authoritative.")
 
     # Compute effective eval_freq
     effective_eval_freq = args.eval_freq
@@ -205,7 +251,11 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         "wandb": args.wandb,
         "tensorboard_log": str(tensorboard_log),
         "mirror_root_models": bool(args.mirror_root_models),
-        "resume_from": str(args.resume_from) if args.resume_from is not None else None,
+        **resume_lineage(
+            resume_from=args.resume_from,
+            reset_num_timesteps=effective_reset_num_timesteps,
+            fine_tune_timesteps=args.total_timesteps if args.resume_from is not None else None,
+        ),
         "net_arch": args.net_arch if args.net_arch else "default",
         "ppo_n_steps": int(args.n_steps) if args.n_steps is not None else None,
     }
@@ -298,16 +348,18 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         )
         callbacks.append(WandbCallback(verbose=1))
 
+    PPOClass = PPO
+    if training_timing:
+        from scripts.runtime_timing import TimedPPO, set_current_timing
+        PPOClass = TimedPPO
+        set_current_timing(training_timing)
+
     if args.resume_from is not None:
-        model = PPO.load(args.resume_from, env=env, device=args.device)
+        loaded_model = PPO.load(args.resume_from, device=args.device)
+        validate_resume_compatibility(loaded_model, env, runtime_config)
+        model = PPOClass.load(args.resume_from, env=env, device=args.device)
         model.tensorboard_log = str(tensorboard_log)
     else:
-        PPOClass = PPO
-        if training_timing:
-            from scripts.runtime_timing import TimedPPO, set_current_timing
-            PPOClass = TimedPPO
-            set_current_timing(training_timing)
-            
         model = PPOClass(
             "MlpPolicy",
             env,
@@ -338,7 +390,11 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
 
     import time
     train_start_wall = time.perf_counter()
-    model.learn(total_timesteps=args.total_timesteps, callback=callbacks)
+    model.learn(
+        total_timesteps=args.total_timesteps,
+        callback=callbacks,
+        reset_num_timesteps=effective_reset_num_timesteps,
+    )
     train_duration = time.perf_counter() - train_start_wall
 
     if training_timing:
@@ -376,6 +432,10 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         f"- policy_action_space_nvec: `{config.get('policy_action_space_nvec')}`",
         f"- sim_action_space_nvec: `{config.get('sim_action_space_nvec')}`",
         f"- total_timesteps: `{args.total_timesteps}`",
+        f"- resume_from: `{args.resume_from if args.resume_from is not None else 'none'}`",
+        f"- parent_experiment_dir: `{config.get('parent_experiment_dir') or 'not inferred'}`",
+        f"- reset_num_timesteps: `{effective_reset_num_timesteps}`",
+        f"- fine_tune_timesteps: `{config.get('fine_tune_timesteps')}`",
         f"- seed: `{args.seed}`",
         f"- n_envs: `{args.n_envs}`",
         f"- vec_env: `{args.vec_env}`",
