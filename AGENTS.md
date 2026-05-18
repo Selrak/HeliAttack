@@ -65,6 +65,15 @@
   - `docs/ai/CODEX_SESSION_LOG.md`
 - Report architectural discrepancies, workarounds, failed approaches, and remaining risks explicitly.
 - Keep `docs/ai` edits concise. Session logs and state updates should record only durable facts, validation results, blockers, and next actions; avoid exhaustive command transcripts unless specifically requested.
+- After completing any task from `docs/ai/NEXT_CODEX_TASK.md`, create a handoff bundle zip directly under `docs/ai/`, named like `codex_task_bundle_YYYYMMDD_HHMMSS_short-task-keywords.zip`.
+- Use 2 task-identifying keywords in the bundle filename when possible; use up to 4 only if needed for clarity.
+- That bundle must include:
+  - copies of every source/test/doc file materially impacted by the task, in its final state;
+  - copies of every impacted `docs/ai` file, in its final state;
+  - the complete current `git diff` output as a text file;
+  - a concise final Codex report text file matching the final console response for the task.
+- The bundled final report should omit working-tree or Git-management commentary unless it is directly relevant to implementation, validation, a blocker, or a risk.
+- If an impacted file is very large, binary, generated, ignored, or ambiguous to include, ask for clarification instead of guessing.
 
 ## User Profile and Communication Preferences
 - User is proficient in Python.
