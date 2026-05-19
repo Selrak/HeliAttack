@@ -36,6 +36,13 @@ Inspected source: `heliattack2_scripts/ha2_core_logic/frame_19_DoAction_2.as`.
 - AS increments `helis` and `rthelis` on death. Python increments both once per killed Heli; `rthelis` is the total-kill counter shown in trace summaries.
 - AS HUD updates `HUD.score`, `HUD.time`, and `HUD.health.mask._yscale`; Python now renders the player healthbar from FFDEC bitmaps `170.png`/`174.png` near `HUD.health` placement `(431,0)`, with a small left offset so the bar no longer hugs the screen edge. Score/time/ammo HUD composition remains unimplemented.
 
+## AS Audit - 2026-05-19 Collision / HitTest Investigation
+
+- AS player projectiles use `enemyArray[i].hit.hitTest(this._x + world._x,this._y + world._y,1)` against the Heli nested `hit` clip, not a Python-style rectangle test.
+- AS enemy projectiles use `player.gfx.hit.hitTest(this._x + world._x,this._y + world._y,1)` against the current player graphics nested `hit` clip.
+- FFDEC SVG exports now confirm non-rectangular hidden hit shapes for Heli `DefineSprite_109`, standing player `DefineSprite_119`, and duck player `DefineSprite_123`.
+- Current Python projectile collision remains rectangle-based; see `docs/ai/HA2_COLLISION_PARITY_AUDIT.md` before changing simulator behavior.
+
 ## Believed To Match Current AS Translation
 - Player spawn uses `map[y][x][0] == 32`, sets `x = tile * 50 + 25`, and starts at `y = -50`.
 - Runtime map setup now clears `32` spawn markers to `0`, matching AS `assignents()`.

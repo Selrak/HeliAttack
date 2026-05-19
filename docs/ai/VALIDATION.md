@@ -30,6 +30,7 @@ python -m scripts.train_parkour --total-timesteps 1024 --n-envs 2 --vec-env subp
 python -m scripts.benchmark_vec_envs --mode train-only --total-timesteps 2048 --repeats 1 --vec-envs dummy subproc --n-envs 1 2 --wandb off --device cpu
 python -m scripts.benchmark_vec_envs --mode workflow --total-timesteps 2048 --repeats 1 --vec-envs dummy subproc --n-envs 1 2 --eval-vec-env same --wandb off --device cpu
 python -m scripts.evaluate_matrix --matrix-name smoke_matrix --entry "label=M0;experiment=experiments/<m0_experiment>;model=latest" --entry "label=M1;experiment=experiments/<m1_experiment>;model=best" --pressure-profiles enemy_fire_slow_4x,enemy_fire_slow_2x,normal --episodes 1 --max-episode-steps 200 --max-parallel 2 --threads-per-job 1 --dry-run
+python -m scripts.evaluate_matrix --matrix-name damage_forensics_smoke --entry "label=M1;experiment=experiments/<m1_experiment>;model=latest" --pressure-profiles normal --episodes 1 --max-episode-steps 600 --max-parallel 1 --threads-per-job 1 --no-save-replays --damage-forensics --damage-forensics-window 60
 python -m scripts.run_experiment --training-profile combat_bullets_v1 --control-mode movement_scripted_attack_direct --reward-profile defense_v1 --pressure-profile normal --total-timesteps 1024 --n-envs 1 --vec-env dummy --wandb off --train-eval off --eval-episodes 1 --max-episode-steps 200 --timing-profile on --label invocation_smoke_label_alias
 ```
 
@@ -48,6 +49,7 @@ Experiment smoke output:
 - `experiments/<created_experiment>/reports/eval_best.json`
 - Evaluation reports should include visible enemy-bullet metrics, damage timing metrics, and defensive rates.
 - Evaluation reports should include top-level `reward_profile`, `pressure_profile`, and aggregated `reward_breakdown`; replay headers should include `reward_profile` and `pressure_profile`, and replay step debug should include `reward_breakdown`.
+- Optional damage forensics evals should write `damage_forensics_*.json` and `.md`; matrix jobs should copy them to `jobs/<eval_id>/damage_forensics.json` and `.md`.
 - Resumed experiment configs should include `resume_from`, `parent_experiment_dir`, parent runtime profiles, `reset_num_timesteps`, and `fine_tune_timesteps`. By default, resumed runs should not reset SB3 timestep numbering.
 - Curriculum reports should include `policy_action_space_nvec`, `sim_action_space_nvec`, `policy_action_distributions`, and `full_action_distributions`.
 - M0 (`movement_no_boost_scripted_attack_direct`) replay `action` values should be full 6D simulator actions with `action[3] == 0` for every step.

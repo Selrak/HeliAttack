@@ -1476,3 +1476,26 @@ Add a cross-platform `scripts.evaluate_matrix` runner for model/pressure evaluat
 - Limitation: `command.txt` is reconstructed from argv and does not preserve byte-exact original shell quoting; use `argv.json` as authoritative.
 - Follow-up: pair and matrix Markdown summaries now repeat the same command reconstruction limitation.
 - Suggested next step: inspect the new metadata files in the smoke outputs before relying on them for long experiment chains.
+
+## 2026-05-18 Europe/Paris - Damage Forensics Evaluation Reports
+
+- Added opt-in `evaluate_model --damage-forensics on --damage-forensics-window N` and `evaluate_matrix --damage-forensics` forwarding/copying/bundling.
+- Added per-impact JSON/Markdown reports with compact pre-impact windows, best-effort candidate bullet fields, availability flags, and heuristic-only tags.
+- Unavailable/null fields: terrain blockage, world-right-edge distance, exact boost cooldown, and exact grounded-state-change timing; these require a future simulator-diagnostics task.
+- Validation passed: py_compile; full pytest (`119 passed, 3 warnings`); smoke matrix `experiments/eval_matrices/damage_forensics_smoke_20260518_233017`.
+- Smoke bundle: `experiments/eval_matrices/damage_forensics_smoke_20260518_233017/damage_forensics_smoke_20260518_233017_bundle.zip`.
+- Follow-up polish: canonical world-edge distances remain null with availability flags; `edge_or_blockage` is not emitted from cumulative edge counters; `candidate_bullet_in_observation` stays null until pre-impact top-K ids are exposed.
+- Follow-up heuristic polish: duck availability no longer creates a missed jump/duck tag; duck relevance is marked unknown, and boost tag wording is `boost_related_or_cooldown`.
+- Suggested next step: run the 20-episode champion normal-pressure forensics matrix and inspect tag counts plus event windows.
+
+## 2026-05-19 Europe/Paris - Collision Parity Audit
+
+- Task: freeze current simulator as a legacy reference and audit AS/FFDEC collision parity without changing `ha2_env.py`.
+- Files inspected: `ha2_env.py`, `ha2_constants.py`, `ha2_replay.py`, `docs/parity_notes.md`, `docs/ai/*`, `heliattack2_scripts/ha2_core_logic/frame_19_DoAction_2.as`, and FFDEC SVG/script exports under `reference_exports/ffdec_ha2/`.
+- Files changed: `ha2_env_legacy.py`, `tests/test_legacy_env.py`, `docs/ai/HA2_COLLISION_PARITY_AUDIT.md`, `docs/parity_notes.md`, `docs/ai/CURRENT_STATE.md`, `docs/ai/CODEX_SESSION_LOG.md`.
+- AS evidence found: `hitCheck` directly indexes `mapa[y][x][0]`; player bullets use `enemyArray[i].hit.hitTest(...,1)`; enemy bullets use `player.gfx.hit.hitTest(...,1)`.
+- FFDEC evidence found: hidden non-rectangular Heli hit shape `DefineSprite_109`, standing player hit shape `DefineSprite_119`, and duck hit shape `DefineSprite_123`.
+- Confirmed difference: Python projectile collision is rectangle-based and may affect player survival, Heli kill timing, hit/miss behavior, rewards, and evaluation comparability.
+- Validation passed: py_compile for `ha2_env.py ha2_env_legacy.py ha2_replay.py`; `tests/test_legacy_env.py` (`1 passed`); full pytest (`120 passed, 3 warnings`); `scripts.play_human --help`.
+- Remaining risk: exact Flash `hitTest` transform semantics and Heli rotation inheritance still need targeted validation before changing simulator collision.
+- Suggested next task: add current-behavior collision tests, then prototype FFDEC polygon point-hit collision behind a compatibility switch and compare against `ha2_env_legacy.py`.

@@ -2,355 +2,311 @@
 
 ## Goal
 
-Add a damage / impact forensics report for evaluation runs.
+Freeze the current HA2 simulator as a legacy reference, then perform a bounded collision parity audit comparing the current Python simulator with the original ActionScript / Flash collision model.
 
-The goal is to understand why the agent still gets hit in normal pressure, without changing training or simulator behavior.
+The central question is:
 
-For each player damage event, record a compact pre-impact context window and event summary so we can classify likely causes:
+Do the current Python rectangle-based collision checks differ from Flash `hitTest(..., ..., true)` in a way that can affect gameplay, training, or evaluation results?
 
-- bullet density too high;
-- bad boost usage;
-- bad trajectory reading;
-- terrain / edge / blockage issue;
-- panic / camping / ineffective input;
-- missing observation information.
-
-## Recommended Codex model / reasoning level
-
-Use the best available full Codex/GPT model.
-
-Recommended:
-
-- Model: GPT-5.5 full / best available full Codex model
-- Reasoning: medium-high
-- Priority: correctness over token economy
-
-Reason: this task is diagnostic infrastructure. It should not alter simulator behavior, but it touches eval loops, replay/debug info, report generation, matrix bundling, and episode-step metadata. A misleading forensics report would lead to bad RL decisions.
+This task must not yet change gameplay behavior in the main simulator. It must preserve the current simulator as a frozen legacy baseline and produce a precise audit that can justify a later simulator change.
 
 ## Non-goals
 
-Do not change simulator physics.
+Do not implement the parachute intro.
 
-Do not change rewards, observations, action spaces, pressure profiles, model loading, PPO training, or replay semantics.
+Do not change player movement physics.
 
-Do not implement a new curriculum.
+Do not change gun firing cadence, bullet speed, bullet damage, reward logic, observations, or training code.
 
-Do not add terrain/topology observations yet.
+Do not immediately replace the current Python hit rectangles with a new collision model.
 
-Do not claim definitive counterfactual avoidability unless a real deterministic branch/replay counterfactual is implemented. For now, report “avoidability hints” / “available options”, not a proof that an impact was avoidable.
+Do not run long training jobs.
+
+Do not run A/B training comparisons in this task.
+
+Do not rewrite `docs/parity_notes.md`. Only add a small dated factual section if the audit confirms new facts.
+
+Do not invent Flash shape behavior if the FFDEC resources are missing or inconclusive.
 
 ## Context
 
-The current champion branch is M1 movement with scripted attack and boost, trained through:
+The project goal is exact or near-exact reproduction of Heli Attack 2 physics and gameplay logic from the original ActionScript.
 
-    slow4 1M
-    -> slow2 500k
-    -> normal 500k
+The current `ha2_env.py` uses explicit Python collision approximations:
 
-Further +500k normal did not improve robustly and degraded transfer. Before changing reward, observation, or curriculum, we need to know why the remaining normal-pressure impacts happen.
+- player/map collision through `_hit_check` and tile probes;
+- player bullet / enemy collision through `_enemy_hit_rect` and `_bullet_hit_enemy`;
+- enemy bullet / player collision through `_player_hit_rect` and `_enemy_bullet_hit_player`;
+- collision debug drawing through `_draw_collision_debug`.
 
-The useful report is: for every hit, what was the hero doing in the seconds before impact, what bullets were nearby, whether boost/jump/duck were available, whether the hero was blocked/camping, and whether this looks like a pressure problem, boost misuse, trajectory problem, terrain problem, or policy panic.
+The existing parity notes already identify unresolved collision questions:
 
-## CLI additions
+- ActionScript `hitCheck` appears to index the map directly, while Python bounds-checks indexes;
+- Python uses a deterministic rectangle for the Heli hit area derived from FFDEC placement data;
+- Flash `hitTest(..., ..., true)` may test against the actual shape of the target clip rather than a simple axis-aligned rectangle;
+- Heli rotation may affect the real Flash hit area, while the current Python Heli hit rectangle is axis-aligned.
 
-Add optional damage forensics to `scripts.evaluate_model`:
-
-    --damage-forensics on/off
-    --damage-forensics-window N
-
-Default:
-
-    --damage-forensics off
-    --damage-forensics-window 60
-
-Add forwarding support in `scripts.evaluate_matrix`:
-
-    --damage-forensics
-    --damage-forensics-window N
-
-When enabled in `evaluate_matrix`, every child eval should produce and bundle its own damage forensics report.
-
-Optional, only if simple and safe:
-
-- forward equivalent flags through `run_experiment` final evals;
-- forward through `run_experiment_pair`.
-
-If forwarding through training orchestration is not trivial, keep this task focused on `evaluate_model` and `evaluate_matrix`.
-
-## Output files
-
-For `evaluate_model`, when enabled, write next to the eval report:
-
-    reports/damage_forensics_<report_stem>.json
-    reports/damage_forensics_<report_stem>.md
-
-or a similarly unambiguous name.
-
-The eval report JSON should include paths to these files, if produced.
-
-For `evaluate_matrix`, copy each job’s forensics files into:
-
-    jobs/<eval_id>/damage_forensics.json
-    jobs/<eval_id>/damage_forensics.md
-
-and include them in the matrix bundle.
-
-The matrix summary should mention whether forensics is available for each eval.
-
-## Data collection design
-
-Do not require full replay saving.
-
-During evaluation, maintain a rolling ring buffer of the last N step snapshots for each episode. When player damage increases, emit a damage event record containing:
-
-- event identity:
-  - episode index;
-  - impact frame;
-  - event index in episode;
-  - damage delta;
-  - health before / after, if available;
-  - termination reason, if the event caused death;
-- runtime config:
-  - training profile;
-  - control mode;
-  - reward profile;
-  - pressure profile;
-  - model choice;
-  - experiment path;
-  - max episode steps;
-- hero state at impact:
-  - x, y;
-  - vx, vy;
-  - grounded / airborne;
-  - ducking, if available;
-  - jumping / jump input;
-  - boost pressed;
-  - boost ready;
-  - boost active, if available;
-  - boost cooldown or frames until ready, if available;
-  - frames since last boost activation;
-  - frames since last landing;
-  - frames since last grounded state change, if available;
-  - frames since last damage;
-- input / motion:
-  - policy action;
-  - full simulator action;
-  - horizontal input;
-  - jump input;
-  - duck input;
-  - boost input;
-  - actual dx during recent frames;
-  - effective/ineffective horizontal movement if available;
-  - pressing left at left edge;
-  - pressing right at right edge;
-  - any existing input-motion mismatch fields;
-- edge / terrain hints:
-  - distance to world left edge;
-  - distance to world right edge;
-  - frames at left/right edge recently;
-  - max consecutive frames at edge recently;
-  - any available obstacle/blockage diagnostics;
-  - if terrain blockage is not currently measurable, write null and note this limitation;
-- bullets:
-  - visible enemy bullet count at impact;
-  - top visible enemy bullets with relative x/y and velocity if available;
-  - nearest bullet by distance;
-  - best candidate hitting bullet, if inferable;
-  - approximate time-to-impact / closest-approach estimate for nearest bullets;
-  - whether the hitting/candidate bullet was in the observation top-K, if inferable;
-  - max visible bullet count in the pre-impact window;
-- pre-impact window:
-  - last N compact snapshots before the impact;
-  - each snapshot should be compact and not duplicate huge action frequency maps;
-  - include frame, hero x/y/vx/vy, key state flags, action, actual dx, visible bullet count, nearest bullet relative position/velocity, edge/blockage hints.
-
-## Avoidability hints
-
-Add a non-authoritative section per damage event:
-
-    avoidability_hints
-
-It may include booleans / small fields such as:
-
-- boost_ready_within_15_frames_before_impact;
-- boost_pressed_when_not_ready_before_impact;
-- boost_available_but_not_pressed_near_impact;
-- grounded_with_jump_available_before_impact;
-- duck_available_before_impact;
-- horizontal_escape_room_left;
-- horizontal_escape_room_right;
-- pressing_into_edge_near_impact;
-- low_visible_bullet_count_but_hit_anyway;
-- high_visible_bullet_count_at_impact;
-- candidate_bullet_in_observation;
-- candidate_bullet_missing_from_observation;
-- impact_while_boost_active_or_recent;
-- impact_shortly_after_landing;
-- impact_during_long_airborne_streak.
-
-Do not label these as definitive “avoidable=true/false”. Use wording like:
-
-    "heuristic_only": true
-
-## Aggregate summary
-
-Generate aggregate metrics in the JSON and Markdown:
-
-- total damage events;
-- damage events per episode;
-- damage-free episode count/rate;
-- damage events by pressure profile;
-- damage events by hero state:
-  - grounded;
-  - airborne;
-  - ducking;
-  - boost active/recent;
-  - boost ready but not used;
-  - near edge;
-  - pressing into edge;
-- average visible bullets at impact;
-- average nearest bullet distance / approximate time-to-impact;
-- fraction of impacts where candidate bullet was in observation, if inferable;
-- impacts occurring within X frames after boost activation;
-- impacts occurring while boost was not ready;
-- impacts occurring shortly after landing;
-- impacts during high bullet density;
-- impacts during low bullet density;
-- top suspected categories with counts, using simple heuristic tags.
-
-Heuristic tags may include:
-
-- high_bullet_density
-- boost_misuse_or_cooldown
-- possible_missed_boost
-- possible_missed_jump_or_duck
-- edge_or_blockage
-- low_density_reading_failure
-- observation_candidate_missing
-- unclear
-
-These tags must be explicitly documented as heuristics.
-
-## Integration with existing reports
-
-Do not bloat the main eval report with every pre-impact frame if this would make reports huge.
-
-Prefer:
-
-- main eval report contains paths and high-level forensics summary;
-- full forensics details live in separate damage_forensics JSON/MD.
-
-The matrix CSV/Markdown should include only compact aggregate forensics fields, for example:
-
-- damage_events
-- high_bullet_density_hits
-- boost_related_hits
-- edge_or_blockage_hits
-- low_density_reading_failure_hits
-- candidate_missing_from_obs_hits
-- unclear_hits
+The first step is therefore not to change gameplay blindly, but to audit the evidence and create a stable legacy simulator for later A/B comparisons.
 
 ## Files to inspect first
 
-- `scripts/evaluate_model.py`
-- `scripts/evaluate_matrix.py`
+Inspect these files first:
+
 - `ha2_env.py`
+- `ha2_constants.py`
 - `ha2_replay.py`
-- `scripts/runtime_config.py`
-- `scripts/invocation_metadata.py`, if present
-- tests for eval reports and matrix reports
-- docs under `docs/ai/`
+- `docs/parity_notes.md`
+- `docs/ai/CURRENT_STATE.md`
+- `docs/ai/ARCHITECTURE_DECISIONS.md`
+- `docs/ai/CODEX_SESSION_LOG.md`
 
-## Tests
+Then inspect the original ActionScript files under `heliattack2_scripts`, especially files containing:
 
-Add tests using fake step snapshots and fake damage events where possible.
+- `hitCheck`
+- `hitTest`
+- `player.gfx.hit`
+- `enemyArray`
+- `bulletFrame`
+- `enemyBulletFrame`
+- `heliFrame`
+- `heroAction`
 
-Required tests:
+Also inspect available FFDEC exports related to:
 
-- damage forensics is off by default.
-- enabling `--damage-forensics` writes JSON and Markdown files.
-- `--damage-forensics-window N` limits the pre-impact window.
-- a fake damage delta creates one damage event record.
-- multiple damage deltas in one episode create multiple event records.
-- no damage creates an empty event list and valid aggregate summary.
-- aggregate summary counts grounded/airborne/boost/edge categories correctly from fake data.
-- avoidability hints are marked as heuristic, not definitive.
-- `evaluate_matrix --damage-forensics` forwards the flag to child eval commands.
-- matrix job directories include copied forensics files.
-- matrix bundle includes forensics files.
-- existing evaluate_model/evaluate_matrix behavior without the flag remains unchanged.
+- the player sprite;
+- player `gfx`;
+- player nested `hit` clip;
+- `DefineSprite_111_Heli`;
+- Heli nested `hit` clip;
+- bullet and enemy bullet sprites if relevant.
 
-Avoid expensive PPO evals in normal tests. Use mocks/fakes where possible.
+If the exact paths differ, search the repository and document the actual paths found.
+
+## Files likely to modify
+
+Verify from the repository, but likely modifications are:
+
+- create `ha2_env_legacy.py`
+- create `docs/ai/HA2_COLLISION_PARITY_AUDIT.md`
+- optionally add a small test file such as `tests/test_legacy_env.py`
+- update `docs/parity_notes.md` only with a small dated factual addendum if new facts are confirmed
+- update `docs/ai/CURRENT_STATE.md`
+- update `docs/ai/CODEX_SESSION_LOG.md`
+
+Do not modify `ha2_env.py` unless absolutely necessary for an import or packaging issue. Any modification to `ha2_env.py` must be explicitly justified in the session log.
+
+## Implementation plan
+
+1. Create `ha2_env_legacy.py` as a frozen copy of the current `ha2_env.py`.
+
+   This must be a real code copy, not an import wrapper around `ha2_env.py`, because `ha2_env.py` is expected to diverge in later parity work.
+
+   Add only a short header comment explaining that this file is a frozen legacy baseline. Do not change simulator logic.
+
+2. Verify that `ha2_env_legacy.py` imports independently.
+
+   At minimum, this must work:
+
+   `from ha2_env_legacy import HeliAttack2Env`
+
+   Creating and resetting the environment must also work.
+
+3. Add a minimal automated legacy smoke test.
+
+   The test should verify at least:
+
+   - `ha2_env_legacy.HeliAttack2Env` imports;
+   - `reset(seed=0)` works;
+   - a short deterministic fixed-action rollout works;
+   - `get_state()` exists;
+   - `state_hash()` exists;
+   - the legacy environment does not import the main `HeliAttack2Env` class from `ha2_env.py`.
+
+   Do not add a permanent test requiring `ha2_env.py` and `ha2_env_legacy.py` to stay identical. They are expected to diverge later.
+
+4. Audit ActionScript map collision.
+
+   Find and document the original `hitCheck` implementation and every relevant call site in player movement.
+
+   For each relevant call site, record:
+
+   - ActionScript file path;
+   - function or block name;
+   - exact expression used;
+   - tile coordinates used;
+   - whether the ActionScript manually guards map bounds before calling `hitCheck`;
+   - whether Python currently matches the behavior or adds safety behavior.
+
+5. Audit ActionScript bullet collision.
+
+   Find and document the original player bullet collision logic.
+
+   Pay special attention to expressions like:
+
+   `enemyArray[i].hit.hitTest(this._x + world._x, this._y + world._y, true)`
+
+   or equivalent decompiled forms.
+
+   Record whether the ActionScript appears to use:
+
+   - point-vs-shape collision;
+   - point-vs-bounding-box collision;
+   - a nested `hit` clip;
+   - world-offset coordinates;
+   - enemy rotation or inherited transforms.
+
+6. Audit ActionScript enemy bullet collision.
+
+   Find and document the original enemy bullet collision logic.
+
+   Pay special attention to expressions like:
+
+   `player.gfx.hit.hitTest(this._x + world._x, this._y + world._y, true)`
+
+   or equivalent decompiled forms.
+
+   Record whether the ActionScript appears to use the player's visible sprite, a nested `hit` clip, or a separate logical hit shape.
+
+7. Audit the current Python collision model.
+
+   In `ha2_env.py`, document the current behavior of:
+
+   - `_hit_check`
+   - `_player_hit_rect`
+   - `_enemy_hit_rect`
+   - `_bullet_hit_enemy`
+   - `_enemy_bullet_hit_player`
+   - `_projectile_should_remove`
+   - `_map_tile_empty_at`
+   - `_draw_collision_debug`
+
+   For each function, classify it as one of:
+
+   - likely ActionScript-equivalent;
+   - deliberate robustness difference;
+   - gameplay approximation;
+   - visual/debug-only helper;
+   - unresolved.
+
+8. Inspect FFDEC resources for nested `hit` clips.
+
+   Determine whether the repository contains enough data to reconstruct:
+
+   - the player's actual Flash hit shape;
+   - the Heli's actual Flash hit shape;
+   - the placement and transformation of those shapes;
+   - whether Heli rotation should rotate the hit area.
+
+   If the needed FFDEC information is missing, state exactly what is missing and what Charles should extract from FFDEC.
+
+9. Create `docs/ai/HA2_COLLISION_PARITY_AUDIT.md`.
+
+   The report must include these sections:
+
+   - `Summary`
+   - `ActionScript evidence`
+   - `Current Python model`
+   - `Confirmed matches`
+   - `Likely gameplay divergences`
+   - `Unresolved questions`
+   - `Recommended next simulator changes`
+   - `FFDEC resources needed, if any`
+
+   The `Likely gameplay divergences` section must explicitly state whether the current Python collision model could affect:
+
+   - player survival;
+   - Heli kill timing;
+   - bullet hit/miss behavior;
+   - training rewards;
+   - evaluation comparability.
+
+   The `Recommended next simulator changes` section must separate:
+
+   - safe changes;
+   - likely changes requiring validation;
+   - changes that must wait for missing Flash/FFDEC evidence.
+
+10. Update `docs/parity_notes.md` only if the audit confirms new facts.
+
+   Add a small dated section such as:
+
+   `## AS Audit - 2026-05-19 Collision / HitTest Investigation`
+
+   Include only concise factual conclusions. Do not reorganize the whole file.
+
+11. Update project handoff documents.
+
+   Update:
+
+   - `docs/ai/CURRENT_STATE.md`
+   - `docs/ai/CODEX_SESSION_LOG.md`
 
 ## Validation
 
-Run:
+Run at least:
 
-    .venv\Scripts\python.exe -m py_compile scripts/evaluate_model.py scripts/evaluate_matrix.py ha2_env.py ha2_replay.py
+- `python -m py_compile ha2_env.py ha2_env_legacy.py ha2_replay.py`
+- `python -m pytest`
 
-Run:
+If a dedicated legacy smoke test is added, also run it explicitly, for example:
 
-    .venv\Scripts\python.exe -m pytest -q
+- `python -m pytest tests/test_legacy_env.py`
 
-Run a tiny smoke eval if a local experiment exists:
+If existing replay or scripted trace tests are relevant and already part of the test suite, let the full test suite cover them.
 
-    .venv\Scripts\python.exe -m scripts.evaluate_matrix --matrix-name damage_forensics_smoke --entry "label=M1;experiment=experiments\20260518_163253_combat_bullets_v1_movement_scripted_attack_direct_defense_v1_normal_500000_b;model=latest" --pressure-profiles normal --episodes 1 --max-episode-steps 600 --max-parallel 1 --threads-per-job 1 --no-save-replays --damage-forensics --damage-forensics-window 60
+Do not run long training.
 
-Verify the produced bundle contains:
+Do not run A/B training comparisons.
 
-- matrix_summary.md
-- jobs/<eval_id>/eval_report.json
-- jobs/<eval_id>/damage_forensics.json
-- jobs/<eval_id>/damage_forensics.md
-- jobs/<eval_id>/metadata.json
-- command/argv/resolved config metadata if present in current codebase.
+## Manual checks
 
-Then run a slightly more useful targeted eval if time allows:
+No long manual graphical check is required for this task.
 
-    .venv\Scripts\python.exe -m scripts.evaluate_matrix --matrix-name M1_champion_damage_forensics_normal_3600 --entry "label=M1_champion;experiment=experiments\20260518_163253_combat_bullets_v1_movement_scripted_attack_direct_defense_v1_normal_500000_b;model=latest" --pressure-profiles normal --episodes 20 --max-episode-steps 3600 --max-parallel 3 --threads-per-job 3 --no-save-replays --damage-forensics --damage-forensics-window 90
+If practical, verify that the human player script still exposes help successfully:
+
+- `python -m scripts.play_human --help`
+
+Do not spend time tuning visuals in this task.
 
 ## Acceptance criteria
 
-Complete only if:
+This task is complete if:
 
-- damage forensics can be enabled from `evaluate_model`;
-- damage forensics can be enabled from `evaluate_matrix`;
-- forensics output is event-based and does not require full replay saving;
-- every damage event has a compact pre-impact context window;
-- aggregate summaries are generated in JSON and Markdown;
-- matrix bundles include all forensics outputs;
-- heuristic avoidability/cause tags are clearly marked as heuristic;
-- no training/simulator behavior changes;
-- tests pass;
-- smoke validation passes.
+- `ha2_env_legacy.py` exists as a frozen, functional copy of the current simulator;
+- the legacy simulator can be imported, reset, stepped, and hashed independently;
+- existing tests pass;
+- a collision parity audit exists at `docs/ai/HA2_COLLISION_PARITY_AUDIT.md`;
+- the audit clearly distinguishes map collision, player bullet collision, enemy bullet collision, and debug collision drawing;
+- the audit explicitly says whether the current Python rectangles may cause gameplay divergence;
+- `docs/parity_notes.md` is updated only with confirmed facts, or left unchanged if no new fact is confirmed;
+- `docs/ai/CURRENT_STATE.md` and `docs/ai/CODEX_SESSION_LOG.md` are updated.
 
 ## Stop conditions
 
-Stop and report if:
+Stop and report instead of improvising if:
 
-- current eval info does not expose enough per-step state to produce meaningful forensics;
-- detecting damage events reliably would require simulator behavior changes;
-- bullet identity cannot be inferred reliably;
-- adding this to evaluate_model requires a broad refactor;
-- forensics output becomes too large for normal use;
-- the task starts turning into terrain/topology observation work or curriculum work.
+- the relevant ActionScript collision functions cannot be found;
+- the FFDEC resources do not expose the nested `hit` clips clearly enough;
+- making `ha2_env_legacy.py` work requires non-trivial simulator changes;
+- a gameplay collision change seems necessary but cannot be justified from ActionScript or FFDEC evidence;
+- tests fail for reasons that are not clearly caused by this task.
 
 ## Required Codex session log
 
 Update:
 
 - `docs/ai/CURRENT_STATE.md`
-- `docs/ai/VALIDATION.md`
 - `docs/ai/CODEX_SESSION_LOG.md`
 
-Log:
+The session log must include:
 
+- files inspected;
 - files changed;
 - commands run;
-- pass/fail result;
-- smoke matrix path;
-- bundle path;
-- what per-impact fields are available;
-- what fields are null because the simulator does not expose them yet;
-- limitations of the heuristic tags;
-- suggested next step.
+- pass/fail result for each command;
+- relevant ActionScript evidence found;
+- relevant FFDEC evidence found or missing;
+- confirmed differences between ActionScript/Flash and Python;
+- any workaround used;
+- remaining risks;
+- recommended next task.

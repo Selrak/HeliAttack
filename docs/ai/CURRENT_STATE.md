@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-17 Europe/Paris
+Last updated: 2026-05-19 Europe/Paris
 
 ## What Appears to Work
 - Python 3.11.9 is available locally; `.venv` has pytest and SB3 installed.
@@ -74,6 +74,7 @@ Last updated: 2026-05-17 Europe/Paris
 - Projectile active-region removal uses Python `worldpos/stw/sth` plus tile collision.
 - Heli spawn timing is now a first-ground-contact proxy for AS `heroStart`, not the full parachute/start lifecycle.
 - Heli hitbox still uses FFDEC `Heli.hit` placement metadata but remains a rectangle approximation of Flash `hitTest`.
+- FFDEC SVG exports confirm hidden non-rectangular hit shapes for Heli, standing player, and ducking player; using them in the simulator is a future parity task, not implemented yet.
 - Heli death respawn is implemented; non-training side effects remain omitted: pickups, drops, random weapon rewards, explosions, shards, blood, sounds, and bullet-time refill.
 - Only the original player healthbar HUD is implemented; score/time/ammo/reload/hyperjump HUD composition remains future work.
 - `combat_v1` is an RL interface layer only; it does not prove AS parity or tune PPO behavior.
@@ -94,6 +95,10 @@ Last updated: 2026-05-17 Europe/Paris
 - `scripts.train_parkour`, `scripts.run_experiment`, and `scripts.run_experiment_pair` support resume/fine-tune from SB3 model zip files. Resumed runs create new experiment directories, default to `reset_num_timesteps=False`, reject `--net-arch`, validate model/env spaces before training, and record parent lineage in configs/summaries.
 - Resume/fine-tune runs with `--timing-profile on` now load through `TimedPPO`, so rollout/update timing remains instrumented after resume.
 - `scripts.evaluate_matrix` runs cross-evaluation matrices across experiment/model entries and pressure profiles. It writes per-job logs/reports/metadata, matrix JSON/CSV/MD summaries, and a self-contained bundle under `experiments/eval_matrices/`. Replay saving is opt-in via `--save-replays`.
+- `scripts.evaluate_model --damage-forensics on` writes separate JSON/Markdown damage-forensics reports with pre-impact windows and heuristic tags; `scripts.evaluate_matrix --damage-forensics` forwards this and bundles copied per-job reports.
+- `ha2_env_legacy.py` is a frozen copy of the current rectangle-collision simulator for future A/B parity checks.
+- `docs/ai/HA2_COLLISION_PARITY_AUDIT.md` documents AS/FFDEC collision evidence. Current projectile collision in `ha2_env.py` is rectangle-based and may diverge from Flash `hitTest(..., ..., true)` against nested hit shapes.
+- Damage forensics is diagnostic only: terrain blockage, world-right-edge distance, exact boost cooldown, and exact grounded-state-change fields are marked unavailable/null until a future simulator-diagnostics task.
 - New experiment and matrix outputs record reproducibility metadata: `argv.json`, `command.txt`, `invocation_metadata.json`, and `resolved_config.json`.
 - `scripts.run_experiment` also records child command metadata such as `train_command.txt` and `eval_latest_command.txt`.
 - `scripts.run_experiment --label` is an alias for `--experiment-name`; conflicting values fail clearly.
