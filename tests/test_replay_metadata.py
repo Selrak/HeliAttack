@@ -17,8 +17,9 @@ from ha2_replay import (
 )
 
 
-def _write_short_replay(path, *, collision_model=collision.COLLISION_MODEL_RECT):
-    env = HeliAttack2Env(render_mode=None, collision_model=collision_model)
+def _write_short_replay(path, *, collision_model=None):
+    kwargs = {} if collision_model is None else {"collision_model": collision_model}
+    env = HeliAttack2Env(render_mode=None, **kwargs)
     obs, _info = env.reset(seed=3)
     try:
         with JsonlReplayWriter(path, env, 3, obs) as writer:
@@ -40,7 +41,7 @@ def _rewrite_header(path, mutate):
 
 def test_new_replay_header_records_simulator_metadata(tmp_path):
     path = tmp_path / "metadata.jsonl"
-    _write_short_replay(path, collision_model=collision.COLLISION_MODEL_FFDEC_POLYGON)
+    _write_short_replay(path)
 
     header, _steps = load_replay(path)
     assert header["simulator_id"] == CURRENT_SIMULATOR_ID
@@ -50,7 +51,7 @@ def test_new_replay_header_records_simulator_metadata(tmp_path):
 
 def test_old_header_without_simulator_metadata_infers_legacy_rect(tmp_path):
     path = tmp_path / "old.jsonl"
-    _write_short_replay(path)
+    _write_short_replay(path, collision_model=collision.COLLISION_MODEL_RECT)
 
     def mutate(header):
         header.pop("simulator_id")
@@ -102,7 +103,7 @@ def test_replay_resolution_can_force_current_or_legacy(tmp_path):
 )
 def test_invalid_replay_metadata_fails_clearly(tmp_path, field, value, message):
     path = tmp_path / "bad.jsonl"
-    _write_short_replay(path)
+    _write_short_replay(path, collision_model=collision.COLLISION_MODEL_RECT)
 
     def mutate(header):
         if field == "simulator_id":
@@ -118,7 +119,7 @@ def test_invalid_replay_metadata_fails_clearly(tmp_path, field, value, message):
 
 def test_unclear_old_header_fails_clearly(tmp_path):
     path = tmp_path / "unclear.jsonl"
-    _write_short_replay(path)
+    _write_short_replay(path, collision_model=collision.COLLISION_MODEL_RECT)
 
     def mutate(header):
         header.pop("simulator_id")

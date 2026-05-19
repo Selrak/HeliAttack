@@ -15,7 +15,7 @@ Last updated: 2026-05-19 Europe/Paris
 - MachineGun is rendered from `assets_ffdec/sprites/DefineSprite_107/1.png` and uses FFDEC gun/barrel placement data for visual registration. Bullet spawn logic was not changed in the visual placement pass.
 - Continuous Heli combat exists: default Heli queues on reset and spawns after first ground contact, dead Helis are removed, kill counters update, and replacement Helis spawn with AS-style `addEnemy` coordinates.
 - Heli combat includes AS-backed `heliFrame` movement/gun aiming/shoot cadence, nested Heli gun rendering, enemy bullets, player health damage, MachineGun-to-Heli damage, state hashing, and scripted traces.
-- `heli_shoots_hero_240` now deterministically shows enemy bullet damage: initial health 100, final health 90, first damaging enemy bullet id 12 at frame 240.
+- `heli_shoots_hero_240` now deterministically shows enemy bullet damage under the current `ffdec_polygon` default: initial health 100, final health 80, first damaging enemy bullet id 9 at frame 191.
 - `kill_heli_respawn_600` deterministically shows Heli death plus replacement spawn.
 - Heli rendering composes visible FFDEC bitmaps `images/78.png` and `images/77.png`; the green `Heli.hit` child is not rendered by default.
 - Player healthbar HUD renders with original FFDEC healthbar bitmaps and the AS bottom-anchored mask-scale rule.
@@ -74,8 +74,8 @@ Last updated: 2026-05-19 Europe/Paris
 - MachineGun visual placement now uses Charles-provided FFDEC metadata; exact visual parity still needs manual Flash comparison.
 - Projectile active-region removal uses Python `worldpos/stw/sth` plus tile collision.
 - Heli spawn timing is now a first-ground-contact proxy for AS `heroStart`, not the full parachute/start lifecycle.
-- Heli hitbox still uses FFDEC `Heli.hit` placement metadata but remains a rectangle approximation of Flash `hitTest`.
-- FFDEC SVG exports confirm hidden non-rectangular hit shapes for Heli, standing player, and ducking player; using them in the simulator is a future parity task, not implemented yet.
+- Default projectile collision now uses `collision_model="ffdec_polygon"` in the evolving HA2 simulator.
+- Explicit `collision_model="rect"` remains available for comparisons and legacy-style runs.
 - Heli death respawn is implemented; non-training side effects remain omitted: pickups, drops, random weapon rewards, explosions, shards, blood, sounds, and bullet-time refill.
 - Only the original player healthbar HUD is implemented; score/time/ammo/reload/hyperjump HUD composition remains future work.
 - `combat_v1` is an RL interface layer only; it does not prove AS parity or tune PPO behavior.
@@ -99,10 +99,11 @@ Last updated: 2026-05-19 Europe/Paris
 - `scripts.evaluate_matrix` runs cross-evaluation matrices across experiment/model entries and pressure profiles. It writes per-job logs/reports/metadata, matrix JSON/CSV/MD summaries, and a self-contained bundle under `experiments/eval_matrices/`. Replay saving is opt-in via `--save-replays`.
 - `scripts.evaluate_model --damage-forensics on` writes separate JSON/Markdown damage-forensics reports with pre-impact windows and heuristic tags; `scripts.evaluate_matrix --damage-forensics` forwards this and bundles copied per-job reports.
 - `ha2_env_legacy.py` is a frozen copy of the current rectangle-collision simulator for future A/B parity checks.
-- `docs/ai/HA2_COLLISION_PARITY_AUDIT.md` documents AS/FFDEC collision evidence. Current projectile collision in `ha2_env.py` is rectangle-based and may diverge from Flash `hitTest(..., ..., true)` against nested hit shapes.
-- `ha2_env.py` now supports opt-in `collision_model="ffdec_polygon"` for projectile hits against FFDEC-derived Heli, standing-player, and duck-player hit polygons. The default remains `collision_model="rect"`.
+- `docs/ai/HA2_COLLISION_PARITY_AUDIT.md` and `docs/ai/FLASH_AS_FINDINGS.md` document AS/FFDEC collision evidence.
+- `ha2_env.py` defaults to `collision_model="ffdec_polygon"` for projectile hits against FFDEC-derived Heli, standing-player, and duck-player hit shapes. Heli transforms are frame-aware, frame 2 is mirrored, parent rotation is applied, and player 1 px outline strokes are included. Explicit `collision_model="rect"` remains available.
 - `ha2_env_legacy.py` is used as the replay-compatible legacy simulator for old pre-split `env_version <= 0.6` replays without explicit simulator metadata.
 - `scripts.compare_collision_models` reports deterministic synthetic probe differences between rectangle and FFDEC polygon collision.
+- `scripts/build_ffdec_parity_bundle.py` builds `reports/ffdec_parity_core_ha2/ffdec_parity_core_ha2.zip` plus `manifest.json` and `manifest.md` for HA2 FFDEC parity analysis.
 - Damage forensics is diagnostic only: terrain blockage, world-right-edge distance, exact boost cooldown, and exact grounded-state-change fields are marked unavailable/null until a future simulator-diagnostics task.
 - New experiment and matrix outputs record reproducibility metadata: `argv.json`, `command.txt`, `invocation_metadata.json`, and `resolved_config.json`.
 - `scripts.run_experiment` also records child command metadata such as `train_command.txt` and `eval_latest_command.txt`.

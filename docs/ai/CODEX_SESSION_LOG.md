@@ -1529,3 +1529,56 @@ Add a cross-platform `scripts.evaluate_matrix` runner for model/pressure evaluat
 - Files changed: `ha2_env.py`, `ha2_replay.py`, `scripts/play_replay.py`, `scripts/verify_replay.py`, `tests/test_replay_metadata.py`, `docs/ai/CURRENT_STATE.md`, `docs/ai/VALIDATION.md`, `docs/ai/CODEX_SESSION_LOG.md`.
 - Validation passed: py_compile for replay modules/scripts; `tests/test_replay_metadata.py` (`7 passed`); full pytest (`134 passed, 3 warnings`); `scripts.play_replay --help`.
 - Remaining risk: old third-party/manual replay files with missing or ambiguous `env_version` are intentionally rejected until manually classified.
+
+## 2026-05-19 Europe/Paris - FFDEC Parity Bundle
+
+- Added `scripts/build_ffdec_parity_bundle.py` to build a cross-platform HA2 FFDEC parity bundle from repo-relative paths using only the Python standard library.
+- Bundle output: `reports/ffdec_parity_core_ha2/ffdec_parity_core_ha2.zip` with `manifest.json` and `manifest.md`.
+- Bundle size: 10,875,752 bytes.
+- Handoff bundle for this task: `docs/ai/codex_task_bundle_20260519_142750_ffdec-parity.zip`.
+- Manifest summary: 27 expected entries found, 4 expected entries missing.
+- Important found paths: `heliattack2_scripts`, `reference_exports/ffdec_ha2/scripts_as`, `reference_exports/ffdec_ha2/sprites_svg`, `reference_exports/ffdec_ha2/shapes_svg`, `reference_exports/ffdec_ha2/swf_xml`, `reference_exports/ffdec_ha2/symbol_class`, `reference_exports/ffdec_ha2/logs`, `reference_exports/ffdec_ha2/images`, and `assets_ffdec/sprites`.
+- Important missing paths with alternatives: `reference_exports/ffdec_ha2/shapes` -> `reference_exports/ffdec_ha2/shapes_svg`; `reference_exports/ffdec_ha2/sprites` -> `reference_exports/ffdec_ha2/sprites_svg` and `reference_exports/ffdec_ha2/sprites_png`; XML wildcard expectations -> `reference_exports/ffdec_ha2/swf_xml/heli_attack_2.swf.xml`.
+- Intentionally excluded from search/bundle: `.git`, `.venv`, `experiments`, `models`, `recordings`, `runs`, `reports`, and other irrelevant large outputs.
+- Validation passed: `py_compile` for the new script; bundle build; zip integrity check with `zipfile.ZipFile.testzip()`.
+
+## 2026-05-19 Europe/Paris - Flash HitTest Collision Model
+
+- Pre-existing status: modified docs/ai files, untracked prior handoff bundles, untracked FFDEC parity bundle outputs, and `scripts/build_ffdec_parity_bundle.py`.
+- Task: harden opt-in `collision_model="ffdec_polygon"` using AS `hitTest(...,1)` and FFDEC display-list matrices; default `rect` behavior preserved.
+- Files inspected: `ha2_env.py`, `ha2_collision.py`, `tests/test_collision_model.py`, `scripts/compare_collision_models.py`, `docs/ai/HA2_COLLISION_PARITY_AUDIT.md`, `docs/parity_notes.md`, AS, P-code, SWF XML, and FFDEC SVG hit-shape exports.
+- Facts confirmed: player bullets test `enemyArray[i].hit` with `world._x/_y`; enemy bullets test `player.gfx.hit`; Heli frame 1 hit matrix is `translate(-104.5,-52.55)`; Heli frame 2 is `scaleX=-1` plus `translate(103.5,-52.0)`; player standing/duck matrices are `(12.65,1.2)` and `(12.85,7.35)`.
+- Files changed: `ha2_collision.py`, `ha2_env.py`, `tests/test_collision_model.py`, `scripts/compare_collision_models.py`, `docs/ai/FLASH_AS_FINDINGS.md`, `docs/parity_notes.md`, `docs/ai/CURRENT_STATE.md`, `docs/ai/CODEX_SESSION_LOG.md`.
+- Implemented transform rules: Flash-style affine composition; Heli frame-specific child transform, parent rotation, then world translation; player standing/duck child transform then world translation.
+- Stroke support: implemented deterministic player 1 px outline support via 0.5 px segment-distance checks; Heli remains fill-only.
+- Validation passed: py_compile; `tests/test_collision_model.py` (`14 passed`); `scripts.compare_collision_models`; full pytest (`141 passed, 3 warnings`).
+- Handoff bundle: `docs/ai/codex_task_bundle_20260519_154355_collision-hittest.zip`.
+- Remaining risks: exact live Flash rasterization/sub-pixel behavior and non-duck player frame mapping still need targeted Flash validation before making polygon collision default.
+- Suggested next task: run visual debug-overlay probes and replay checks with `collision_model="ffdec_polygon"` before changing any default simulator semantics.
+
+## 2026-05-19 Europe/Paris - Collision Documentation Cleanup
+
+- Updated documentation only: `docs/ai/CURRENT_STATE.md`, `docs/ai/FLASH_AS_FINDINGS.md`, and `docs/ai/CODEX_SESSION_LOG.md`.
+- Removed stale wording that described FFDEC polygon hit shapes as a future/not-implemented simulator task.
+- State documented at that time: `rect` remained default; opt-in `ffdec_polygon` was implemented with FFDEC polygon shapes, Flash-style transforms, frame-aware mirrored Heli frame 2, Heli rotation, and standing/duck player shape selection.
+- Runtime code, tests, replay code, training code, and parity logic were not modified.
+
+## 2026-05-19 Europe/Paris - Collision Visual Validation Artifacts
+
+- Files changed: `docs/ai/CODEX_SESSION_LOG.md`; generated PNGs under `reports/collision_visual_validation/`.
+- Output screenshots: `heli_frame_1_polygon_overlay.png`, `heli_frame_2_mirrored_polygon_overlay.png`, `heli_rotated_polygon_overlay.png`, `player_standing_polygon_overlay.png`, `player_duck_polygon_overlay.png`.
+- Commands run: generated screenshots with existing `HeliAttack2Env(render_mode="rgb_array", collision_model="ffdec_polygon")`; `python -m py_compile ha2_env.py ha2_collision.py`; `python -m pytest tests/test_collision_model.py -q`.
+- Validation result: py_compile passed; collision tests passed (`14 passed`).
+- Runtime code changed: no.
+- Remaining visual uncertainty: Charles still needs to inspect the PNGs for plausibility against Flash; no live GUI/manual Flash comparison was performed.
+
+## 2026-05-19 Europe/Paris - FFDEC Polygon Collision Default
+
+- Files changed: `ha2_env.py`, `tests/test_collision_model.py`, `tests/test_replay_metadata.py`, `docs/ai/CURRENT_STATE.md`, `docs/parity_notes.md`, `docs/ai/CODEX_SESSION_LOG.md`.
+- Changed evolving HA2 default `collision_model` from `rect` to `ffdec_polygon`.
+- New `ENV_VERSION`: `0.8`.
+- Confirmed explicit `collision_model="rect"` remains available in tests.
+- Confirmed `ha2_env_legacy.py` was not modified.
+- Commands run: `python -m py_compile ha2_env.py ha2_collision.py ha2_replay.py`; `python -m pytest tests/test_collision_model.py`; `python -m pytest tests/test_replay_metadata.py`; `python -m scripts.compare_collision_models`; `python -m pytest tests/test_scripted_trace.py::test_scripted_heli_shoots_hero_trace_summary`; `python -m pytest`.
+- Results: py_compile passed; collision tests passed (`15 passed`); replay metadata tests passed (`7 passed`); comparison script passed; scripted trace check passed; full pytest passed (`142 passed, 3 warnings`).
+- Replay metadata: new default env replays record `simulation_semantics.collision_model="ffdec_polygon"`.

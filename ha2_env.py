@@ -21,7 +21,7 @@ import ha2_constants as const
 REPO_ROOT = Path(__file__).resolve().parent
 HA2_ASSET_DIR = REPO_ROOT / "assets_ffdec"
 ENV_NAME = "HeliAttack2Env"
-ENV_VERSION = "0.7"
+ENV_VERSION = "0.8"
 
 AIM_BINS = 32
 DEFAULT_AIM_BIN = 0
@@ -183,7 +183,7 @@ class HeliAttack2Env(gym.Env):
         training_profile: str = "legacy",
         reward_profile: str = "combat_default",
         pressure_profile: str = PRESSURE_PROFILE_NORMAL,
-        collision_model: str = collision.COLLISION_MODEL_RECT,
+        collision_model: str = collision.COLLISION_MODEL_FFDEC_POLYGON,
         max_episode_steps: int | None = None,
     ):
         super().__init__()
@@ -1073,6 +1073,7 @@ class HeliAttack2Env(gym.Env):
         return collision.heli_hit_polygon_world(
             float(enemy["x"]),
             float(enemy["y"]),
+            frame=int(enemy.get("frame", 1)),
             rotation=float(enemy.get("rotation", 0.0)),
         )
 
@@ -1133,7 +1134,12 @@ class HeliAttack2Env(gym.Env):
         bx = float(bullet["x"])
         by = float(bullet["y"])
         if self.collision_model == collision.COLLISION_MODEL_FFDEC_POLYGON:
-            return collision.point_in_polygon((bx, by), self._player_hit_polygon())
+            return collision.point_in_player_hit_shape_world(
+                (bx, by),
+                self._x,
+                self._y,
+                duck=bool(self.duck),
+            )
         left, top, right, bottom = self._player_hit_rect()
         return left <= bx <= right and top <= by <= bottom
 

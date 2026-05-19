@@ -17,8 +17,30 @@ def _make_env(model: str) -> HeliAttack2Env:
     return env
 
 
-def _make_enemy() -> dict:
-    return {"id": 1, "type": "Heli", "x": 300.0, "y": 200.0, "health": 300, "rotation": 0.0}
+def _make_enemy(*, frame: int = 1, rotation: float = 0.0) -> dict:
+    return {
+        "id": 1,
+        "type": "Heli",
+        "x": 300.0,
+        "y": 200.0,
+        "health": 300,
+        "frame": frame,
+        "rotation": rotation,
+    }
+
+
+def _probe_enemy(rect_env: HeliAttack2Env, poly_env: HeliAttack2Env, label: str, point: tuple[float, float], enemy: dict) -> dict:
+    rect_enemy = dict(enemy)
+    poly_enemy = dict(enemy)
+    rect_env.enemies = [rect_enemy]
+    poly_env.enemies = [poly_enemy]
+    bullet = {"id": 1, "x": point[0], "y": point[1], "damage": 10}
+    return {
+        "case": label,
+        "rect": rect_env._bullet_hit_enemy(dict(bullet)) is not None,
+        "ffdec_polygon": poly_env._bullet_hit_enemy(dict(bullet)) is not None,
+        "point": point,
+    }
 
 
 def compare() -> list[dict]:
@@ -26,26 +48,20 @@ def compare() -> list[dict]:
     poly_env = _make_env(collision.COLLISION_MODEL_FFDEC_POLYGON)
     rows: list[dict] = []
     try:
-        heli_enemy = _make_enemy()
-        left, top, _right, _bottom = rect_env._enemy_hit_rect(heli_enemy)
-        heli_points = {
-            "heli_rect_only_top_left": (left + 1.0, top + 1.0),
-            "heli_both_center": (300.0, 200.0),
-        }
-        for label, point in heli_points.items():
-            rect_enemy = _make_enemy()
-            poly_enemy = _make_enemy()
-            rect_env.enemies = [rect_enemy]
-            poly_env.enemies = [poly_enemy]
-            bullet = {"id": 1, "x": point[0], "y": point[1], "damage": 10}
-            rows.append(
-                {
-                    "case": label,
-                    "rect": rect_env._bullet_hit_enemy(dict(bullet)) is not None,
-                    "ffdec_polygon": poly_env._bullet_hit_enemy(dict(bullet)) is not None,
-                    "point": point,
-                }
-            )
+        heli_frame_1 = _make_enemy(frame=1)
+        left, top, _right, _bottom = rect_env._enemy_hit_rect(heli_frame_1)
+        rows.append(_probe_enemy(rect_env, poly_env, "heli_frame_1_rect_only_top_left", (left + 1.0, top + 1.0), heli_frame_1))
+        rows.append(_probe_enemy(rect_env, poly_env, "heli_frame_1_both_center", (300.0, 200.0), heli_frame_1))
+
+        heli_frame_2 = _make_enemy(frame=2)
+        rows.append(_probe_enemy(rect_env, poly_env, "heli_frame_2_mirrored_left_edge", (199.0, 149.0), heli_frame_2))
+        rows.append(_probe_enemy(rect_env, poly_env, "heli_frame_2_mirrored_right_edge", (401.0, 149.0), heli_frame_2))
+
+        heli_frame_1_rotated = _make_enemy(frame=1, rotation=30.0)
+        rows.append(_probe_enemy(rect_env, poly_env, "heli_frame_1_rotated", (365.0, 155.0), heli_frame_1_rotated))
+
+        heli_frame_2_rotated = _make_enemy(frame=2, rotation=-30.0)
+        rows.append(_probe_enemy(rect_env, poly_env, "heli_frame_2_rotated", (235.0, 155.0), heli_frame_2_rotated))
 
         for env in (rect_env, poly_env):
             env._x = 100.0

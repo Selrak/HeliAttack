@@ -114,11 +114,11 @@ def test_scripted_heli_shoots_hero_trace_summary(tmp_path):
     summary = result.summary_path.read_text(encoding="utf-8")
     assert "scenario=heli_shoots_hero_240" in summary
     assert "enemy_bullets_spawned=" in summary
-    assert "enemy_bullet_hits=1" in summary
+    assert "enemy_bullet_hits=2" in summary
     assert "initial_player_health=100" in summary
-    assert "final_player_health=90" in summary
-    assert "first_enemy_damage_frame=240" in summary
-    assert "first_enemy_damage_bullet_id=12" in summary
+    assert "final_player_health=80" in summary
+    assert "first_enemy_damage_frame=191" in summary
+    assert "first_enemy_damage_bullet_id=9" in summary
 
 
 def test_scripted_kill_heli_respawn_trace_summary(tmp_path):

@@ -43,12 +43,16 @@ Inspected source: `heliattack2_scripts/ha2_core_logic/frame_19_DoAction_2.as`.
 - FFDEC SVG exports now confirm non-rectangular hidden hit shapes for Heli `DefineSprite_109`, standing player `DefineSprite_119`, and duck player `DefineSprite_123`.
 - Current Python projectile collision remains rectangle-based; see `docs/ai/HA2_COLLISION_PARITY_AUDIT.md` before changing simulator behavior.
 
-## AS Audit - 2026-05-19 FFDEC Polygon Collision Prototype
+## AS Audit - 2026-05-19 FFDEC Polygon Collision Model
 
-- `collision_model="rect"` remains the simulator default.
-- `collision_model="ffdec_polygon"` is an opt-in prototype for projectile hit tests using embedded FFDEC polygons from `DefineSprite_109`, `DefineSprite_119`, and `DefineSprite_123`.
-- Heli polygon placement uses the exported `hit` child offset `(-104.5,-52.55)` and rotates around the current Heli registration point, matching the current renderer assumption. Exact Flash `hitTest` transform parity still needs targeted Flash validation.
-- Player polygon placement uses the standing `gfx.hit` offset `(12.65,1.2)` for non-duck states and the duck offset `(12.85,7.35)` for duck. Non-duck jump/walk/chute states reuse the standing hit shape for now.
+- `collision_model="ffdec_polygon"` is now the evolving simulator default for projectile hit tests.
+- `collision_model="rect"` remains available explicitly for comparisons and legacy-style runs.
+- Heli frame 1 applies the `hit` child matrix translation `(-104.5,-52.55)`.
+- Heli frame 2 applies the `hit` child matrix `scaleX=-1`, `scaleY=1`, translation `(103.5,-52.0)`.
+- Heli parent rotation is applied around the current Heli registration point before world translation.
+- Player polygon placement uses the standing `gfx.hit` offset `(12.65,1.2)` for non-duck states and the duck offset `(12.85,7.35)` for duck.
+- Player polygon hit tests include the exported 1 px outline stroke as a deterministic 0.5 px segment-distance check. Heli hit tests are fill-only.
+- Exact Flash `hitTest` semantics still need targeted Flash validation; `ffdec_polygon` is the current default but may still need parity refinements.
 
 ## Believed To Match Current AS Translation
 - Player spawn uses `map[y][x][0] == 32`, sets `x = tile * 50 + 25`, and starts at `y = -50`.
@@ -73,7 +77,7 @@ Inspected source: `heliattack2_scripts/ha2_core_logic/frame_19_DoAction_2.as`.
 - Heli spawn is delayed until first ground contact as a minimal proxy for AS `heroStart`; the actual parachute/start lifecycle is still not modeled.
 - Heli death side effects that are not required for MachineGun-only training are omitted: random weapon rewards, powerups/drops, shards, destroyed-Heli debris, blood, sounds, and bullet-time refill.
 - Only the original player healthbar HUD is implemented; score/time/ammo/reload/hyperjump HUD elements remain future work.
-- Heli hit detection uses the FFDEC nested `hit` placement from `DefineSprite_111_Heli` and the exported hit sprite size as a deterministic rectangle, not Flash's exact `hitTest`.
+- Default Heli projectile hit detection now uses the FFDEC nested `hit` shape with frame-aware mirroring and parent rotation. The legacy rectangle remains available through explicit `collision_model="rect"` and `ha2_env_legacy.py`.
 - Heli movement and gun logic now use the inspected AS formulas, but exact parity is still blocked by missing AS `heroStart` lifecycle and unresolved casing/typo quirks.
 
 ## Intentionally Simplified For Now
