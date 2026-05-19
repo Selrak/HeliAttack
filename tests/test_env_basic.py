@@ -156,7 +156,7 @@ def test_headless_speed_smoke():
 
 def test_machinegun_deterministic_hold_fire():
     def run_once():
-        env = HeliAttack2Env(render_mode=None)
+        env = HeliAttack2Env(render_mode=None, skip_intro=True)
         env.reset(seed=123)
         for _ in range(60):
             env.step([1, 0, 0, 0, 0, 0])
@@ -289,11 +289,13 @@ def test_default_heli_deterministic():
     assert enemy_states[0][0]["type"] == "Heli"
 
 
-def test_default_heli_waits_for_first_ground_contact():
+def test_default_intro_spawns_heli_after_as_start_lifecycle():
     env = HeliAttack2Env(render_mode=None)
     env.reset(seed=0)
     assert env.enemies == []
     assert env.pending_default_heli is True
+    assert env.intro_active is True
+    assert env.skip_intro is False
 
     for _ in range(20):
         _obs, _reward, _terminated, _truncated, info = env.step(IDLE_ACTION)
@@ -301,17 +303,30 @@ def test_default_heli_waits_for_first_ground_contact():
         assert info["contact"]["ground"] is False
 
     spawn_info = step_until_default_heli_spawn(env)
-    assert spawn_info["contact"]["ground"] is True
+    assert spawn_info["intro_active"] is False
     assert env.default_heli_spawned is True
     assert env.pending_default_heli is False
     assert len(env.enemies) == 1
     env.close()
 
 
+def test_skip_intro_starts_on_ground_with_default_heli():
+    env = HeliAttack2Env(render_mode=None, skip_intro=True)
+    _obs, info = env.reset(seed=0)
+    assert info["skip_intro"] is True
+    assert info["intro_mode"] == "skip_intro"
+    assert info["grounded"] is True
+    assert env.intro_active is False
+    assert env.pending_default_heli is False
+    assert env.default_heli_spawned is True
+    assert len(env.enemies) == 1
+    env.close()
+
+
 def test_default_heli_startup_has_no_large_vertical_dart():
-    env = HeliAttack2Env(render_mode=None)
+    env = HeliAttack2Env(render_mode=None, skip_intro=True)
     env.reset(seed=0)
-    step_until_default_heli_spawn(env)
+    assert env.default_heli_spawned is True
 
     y_values = [float(env.enemies[0]["y"])]
     for _ in range(20):

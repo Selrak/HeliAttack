@@ -6,8 +6,10 @@ Run from repo root after installing `requirements.txt`. Use the project venv (`.
 python -m py_compile ha2_env.py ha2_env_legacy.py ha2_collision.py ha2_replay.py extract_ha2_data.py ha2_constants.py
 python -m py_compile scripts/runtime_config.py scripts/experiment_utils.py scripts/invocation_metadata.py scripts/train_parkour.py scripts/evaluate_model.py scripts/evaluate_matrix.py scripts/watch_model.py scripts/play_human.py scripts/play_replay.py scripts/run_experiment.py scripts/run_experiment_pair.py scripts/benchmark_vec_envs.py
 python -m py_compile scripts/compare_collision_models.py
+python -m py_compile scripts/build_ffdec_parity_bundle.py
 python -m pytest tests/test_collision_model.py tests/test_legacy_env.py
 python -m scripts.compare_collision_models
+python scripts/build_ffdec_parity_bundle.py
 python -m pytest
 python -m scripts.record_random_replay --steps 300 --out replays/smoke.jsonl
 python -m scripts.verify_replay replays/smoke.jsonl
@@ -37,7 +39,7 @@ python -m scripts.evaluate_matrix --matrix-name damage_forensics_smoke --entry "
 python -m scripts.run_experiment --training-profile combat_bullets_v1 --control-mode movement_scripted_attack_direct --reward-profile defense_v1 --pressure-profile normal --total-timesteps 1024 --n-envs 1 --vec-env dummy --wandb off --train-eval off --eval-episodes 1 --max-episode-steps 200 --timing-profile on --label invocation_smoke_label_alias
 ```
 
-Current Heli damage check: `reports/parity_traces/heli_shoots_hero_240_summary.txt` should show `initial_player_health=100`, `final_player_health=90`, `enemy_bullet_hits=1`, and `first_enemy_damage_frame=240`.
+Current Heli damage check: `reports/parity_traces/heli_shoots_hero_240_summary.txt` should show `initial_player_health=100`, `final_player_health=50`, `enemy_bullet_hits=5`, and `first_enemy_damage_frame=91`.
 Current Heli respawn check: `reports/parity_traces/kill_heli_respawn_600_summary.txt` should show non-empty `killed_enemy_ids`, a non-`None` `replacement_heli_spawn_frame`, and `active_enemies=1`.
 Manual healthbar check: in `heli_shoots_hero_240`, the original red healthbar at the top-right should shrink after player damage.
 

@@ -13,9 +13,9 @@ Last updated: 2026-05-19 Europe/Paris
 - Scripted movement trace generation exists for idle, walk right, jump hold, double jump, duck/stand, and hyperjump.
 - Default MachineGun firing exists with AS constants, deterministic env-local spread RNG, bullet state hashing/replay debug, Pygame bullet rendering, and `fire_right_60` scripted trace.
 - MachineGun is rendered from `assets_ffdec/sprites/DefineSprite_107/1.png` and uses FFDEC gun/barrel placement data for visual registration. Bullet spawn logic was not changed in the visual placement pass.
-- Continuous Heli combat exists: default Heli queues on reset and spawns after first ground contact, dead Helis are removed, kill counters update, and replacement Helis spawn with AS-style `addEnemy` coordinates.
+- Continuous Heli combat exists: default Heli spawns after AS intro completion or immediately in `skip_intro=True`, dead Helis are removed, kill counters update, and replacement Helis spawn with AS-style `addEnemy` coordinates.
 - Heli combat includes AS-backed `heliFrame` movement/gun aiming/shoot cadence, nested Heli gun rendering, enemy bullets, player health damage, MachineGun-to-Heli damage, state hashing, and scripted traces.
-- `heli_shoots_hero_240` now deterministically shows enemy bullet damage under the current `ffdec_polygon` default: initial health 100, final health 80, first damaging enemy bullet id 9 at frame 191.
+- `heli_shoots_hero_240` now uses scripted fast-start (`skip_intro=True`) and deterministically shows enemy bullet damage under the current `ffdec_polygon` default: initial health 100, final health 50, first damaging enemy bullet id 5 at frame 91.
 - `kill_heli_respawn_600` deterministically shows Heli death plus replacement spawn.
 - Heli rendering composes visible FFDEC bitmaps `images/78.png` and `images/77.png`; the green `Heli.hit` child is not rendered by default.
 - Player healthbar HUD renders with original FFDEC healthbar bitmaps and the AS bottom-anchored mask-scale rule.
@@ -70,10 +70,10 @@ Last updated: 2026-05-19 Europe/Paris
 - No HA3 implementation was found during bootstrap inspection.
 
 ## Current Risks and Unclear Points
-- Camera now has minimal AS-style stateful `world_x/world_y/worldpos` for Heli/projectiles; parallax and full `heroStart` lifecycle remain simplified.
+- Camera now has minimal AS-style stateful `world_x/world_y/worldpos` for Heli/projectiles; parallax remains simplified.
 - MachineGun visual placement now uses Charles-provided FFDEC metadata; exact visual parity still needs manual Flash comparison.
 - Projectile active-region removal uses Python `worldpos/stw/sth` plus tile collision.
-- Heli spawn timing is now a first-ground-contact proxy for AS `heroStart`, not the full parachute/start lifecycle.
+- Default HA2 startup now has two modes: `skip_intro=False` runs an AS-backed `heroStart` parachute lifecycle and spawns the first Heli when the chute closes; `skip_intro=True` starts grounded near the left side and creates the first Heli immediately for training/scripts.
 - Default projectile collision now uses `collision_model="ffdec_polygon"` in the evolving HA2 simulator.
 - Explicit `collision_model="rect"` remains available for comparisons and legacy-style runs.
 - Heli death respawn is implemented; non-training side effects remain omitted: pickups, drops, random weapon rewards, explosions, shards, blood, sounds, and bullet-time refill.
@@ -101,6 +101,8 @@ Last updated: 2026-05-19 Europe/Paris
 - `ha2_env_legacy.py` is a frozen copy of the current rectangle-collision simulator for future A/B parity checks.
 - `docs/ai/HA2_COLLISION_PARITY_AUDIT.md` and `docs/ai/FLASH_AS_FINDINGS.md` document AS/FFDEC collision evidence.
 - `ha2_env.py` defaults to `collision_model="ffdec_polygon"` for projectile hits against FFDEC-derived Heli, standing-player, and duck-player hit shapes. Heli transforms are frame-aware, frame 2 is mirrored, parent rotation is applied, and player 1 px outline strokes are included. Explicit `collision_model="rect"` remains available.
+- `ha2_env.py` defaults to `skip_intro=False`; runtime training/evaluation config defaults to `skip_intro=True`.
+- Evolving simulator `ENV_VERSION` is `0.9` after the startup semantics change.
 - `ha2_env_legacy.py` is used as the replay-compatible legacy simulator for old pre-split `env_version <= 0.6` replays without explicit simulator metadata.
 - `scripts.compare_collision_models` reports deterministic synthetic probe differences between rectangle and FFDEC polygon collision.
 - `scripts/build_ffdec_parity_bundle.py` builds `reports/ffdec_parity_core_ha2/ffdec_parity_core_ha2.zip` plus `manifest.json` and `manifest.md` for HA2 FFDEC parity analysis.

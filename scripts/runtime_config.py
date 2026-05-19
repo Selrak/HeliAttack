@@ -20,6 +20,7 @@ DEFAULT_CONTROL_MODE = CONTROL_MODE_FULL
 DEFAULT_REWARD_PROFILE = "combat_default"
 DEFAULT_PRESSURE_PROFILE = PRESSURE_PROFILE_NORMAL
 DEFAULT_MAX_EPISODE_STEPS = 1800
+DEFAULT_SKIP_INTRO = True
 
 _HUMAN_COUNT_SUFFIXES = {
     "k": 1_000,
@@ -50,6 +51,7 @@ class RuntimeConfig:
     reward_profile: str = DEFAULT_REWARD_PROFILE
     pressure_profile: str = DEFAULT_PRESSURE_PROFILE
     max_episode_steps: int | None = DEFAULT_MAX_EPISODE_STEPS
+    skip_intro: bool = DEFAULT_SKIP_INTRO
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -61,6 +63,7 @@ RUNTIME_ARG_FIELDS = (
     "reward_profile",
     "pressure_profile",
     "max_episode_steps",
+    "skip_intro",
 )
 
 
@@ -72,6 +75,7 @@ def add_runtime_config_args(
     reward_profile_default: str | None = DEFAULT_REWARD_PROFILE,
     pressure_profile_default: str | None = DEFAULT_PRESSURE_PROFILE,
     max_episode_steps_default: int | None = DEFAULT_MAX_EPISODE_STEPS,
+    skip_intro_default: bool = DEFAULT_SKIP_INTRO,
 ) -> None:
     parser.add_argument(
         "--training-profile",
@@ -98,6 +102,8 @@ def add_runtime_config_args(
         type=parse_human_count,
         default=argparse.SUPPRESS,
     )
+    parser.add_argument("--skip-intro", dest="skip_intro", action="store_true", default=argparse.SUPPRESS)
+    parser.add_argument("--no-skip-intro", dest="skip_intro", action="store_false", default=argparse.SUPPRESS)
     parser.set_defaults(
         _runtime_defaults=RuntimeConfig(
             training_profile=training_profile_default,
@@ -105,6 +111,7 @@ def add_runtime_config_args(
             reward_profile=reward_profile_default,
             pressure_profile=pressure_profile_default,
             max_episode_steps=max_episode_steps_default,
+            skip_intro=skip_intro_default,
         )
     )
 
@@ -133,6 +140,7 @@ def resolve_runtime_config(
             if values["max_episode_steps"] is None
             else int(values["max_episode_steps"])
         ),
+        skip_intro=bool(values["skip_intro"]),
     )
 
 

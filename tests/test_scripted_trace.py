@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ha2_replay import verify_replay_file
+from ha2_replay import load_replay, verify_replay_file
 from scripts.record_scripted_trace import SCENARIOS, record_scenario
 
 
@@ -11,6 +11,7 @@ def test_scripted_trace_generation(tmp_path):
         frame_count=12,
         selected_frames=(0, 1, 2, 10, 12),
         write_screenshots=False,
+        skip_intro=True,
     )
 
     assert "idle_120" in SCENARIOS
@@ -32,12 +33,14 @@ def test_scripted_trace_deterministic(tmp_path):
         tmp_path / "first",
         frame_count=20,
         write_screenshots=False,
+        skip_intro=True,
     )
     second = record_scenario(
         "walk_right_120",
         tmp_path / "second",
         frame_count=20,
         write_screenshots=False,
+        skip_intro=True,
     )
 
     assert first.final_hash == second.final_hash
@@ -54,6 +57,7 @@ def test_scripted_fire_trace_summary(tmp_path):
         "fire_right_60",
         tmp_path,
         write_screenshots=False,
+        skip_intro=True,
     )
 
     assert result.replay_path.exists()
@@ -72,6 +76,7 @@ def test_scripted_fire_at_heli_trace_summary(tmp_path):
         "fire_at_heli_180",
         tmp_path,
         write_screenshots=False,
+        skip_intro=True,
     )
 
     assert result.replay_verified is True
@@ -88,11 +93,13 @@ def test_scripted_fire_at_heli_deterministic(tmp_path):
         "fire_at_heli_180",
         tmp_path / "first",
         write_screenshots=False,
+        skip_intro=True,
     )
     second = record_scenario(
         "fire_at_heli_180",
         tmp_path / "second",
         write_screenshots=False,
+        skip_intro=True,
     )
 
     assert first.final_hash == second.final_hash
@@ -106,6 +113,7 @@ def test_scripted_heli_shoots_hero_trace_summary(tmp_path):
         "heli_shoots_hero_240",
         tmp_path,
         write_screenshots=False,
+        skip_intro=True,
     )
 
     assert result.replay_verified is True
@@ -114,11 +122,11 @@ def test_scripted_heli_shoots_hero_trace_summary(tmp_path):
     summary = result.summary_path.read_text(encoding="utf-8")
     assert "scenario=heli_shoots_hero_240" in summary
     assert "enemy_bullets_spawned=" in summary
-    assert "enemy_bullet_hits=2" in summary
+    assert "enemy_bullet_hits=5" in summary
     assert "initial_player_health=100" in summary
-    assert "final_player_health=80" in summary
-    assert "first_enemy_damage_frame=191" in summary
-    assert "first_enemy_damage_bullet_id=9" in summary
+    assert "final_player_health=50" in summary
+    assert "first_enemy_damage_frame=91" in summary
+    assert "first_enemy_damage_bullet_id=5" in summary
 
 
 def test_scripted_kill_heli_respawn_trace_summary(tmp_path):
@@ -126,6 +134,7 @@ def test_scripted_kill_heli_respawn_trace_summary(tmp_path):
         "kill_heli_respawn_600",
         tmp_path,
         write_screenshots=False,
+        skip_intro=True,
     )
 
     assert result.replay_verified is True
@@ -139,3 +148,15 @@ def test_scripted_kill_heli_respawn_trace_summary(tmp_path):
     assert "first_heli_death_frame=None" not in summary
     assert "replacement_heli_spawn_frame=None" not in summary
     assert "active_enemies=1" in summary
+
+
+def test_scripted_trace_default_keeps_intro(tmp_path):
+    result = record_scenario(
+        "idle_120",
+        tmp_path,
+        frame_count=1,
+        write_screenshots=False,
+    )
+
+    header, _steps = load_replay(result.replay_path)
+    assert header["simulation_semantics"]["skip_intro"] is False

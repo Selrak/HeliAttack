@@ -36,6 +36,7 @@ def test_runtime_config_precedence_cli_over_config_over_default():
         "reward_profile": "defense_v1",
         "pressure_profile": "enemy_fire_slow_4x",
         "max_episode_steps": 777,
+        "skip_intro": False,
     }
 
     inferred = resolve_runtime_config(parser.parse_args([]), config)
@@ -57,6 +58,7 @@ def test_runtime_config_precedence_cli_over_config_over_default():
             "normal",
             "--max-episode-steps",
             "1M",
+            "--skip-intro",
         ]
     )
     overridden = resolve_runtime_config(overridden_args, config)
@@ -65,12 +67,14 @@ def test_runtime_config_precedence_cli_over_config_over_default():
     assert overridden.reward_profile == "combat_default"
     assert overridden.pressure_profile == "normal"
     assert overridden.max_episode_steps == 1_000_000
+    assert overridden.skip_intro is True
     assert set(explicit_runtime_overrides(overridden_args, config, overridden)) == {
         "training_profile",
         "control_mode",
         "reward_profile",
         "pressure_profile",
         "max_episode_steps",
+        "skip_intro",
     }
 
 
@@ -86,6 +90,7 @@ def test_runtime_env_kwargs_contains_env_creation_values():
         "reward_profile": "defense_v1",
         "pressure_profile": "normal",
         "max_episode_steps": 1800,
+        "skip_intro": True,
     }
 
 
@@ -695,6 +700,8 @@ def test_runtime_args_are_accepted_by_user_scripts():
         assert "--reward-profile" in help_text
         assert "--pressure-profile" in help_text
         assert "--max-episode-steps" in help_text
+        if not module.endswith("run_experiment_pair"):
+            assert "--skip-intro" in help_text
 
 
 def test_run_experiment_pair_forwards_pressure_profiles(tmp_path, monkeypatch):

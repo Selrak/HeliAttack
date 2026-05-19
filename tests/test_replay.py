@@ -12,7 +12,7 @@ from ha2_replay import JsonlReplayWriter, load_replay, verify_replay_file
 def test_replay_roundtrip(tmp_path):
     path = tmp_path / "roundtrip.jsonl"
     rng = np.random.default_rng(7)
-    env = HeliAttack2Env(render_mode=None)
+    env = HeliAttack2Env(render_mode=None, skip_intro=True)
     obs, _info = env.reset(seed=7)
 
     with JsonlReplayWriter(path, env, 7, obs) as writer:
@@ -32,7 +32,7 @@ def test_replay_roundtrip(tmp_path):
 
 def test_replay_detects_bullet_state_mismatch(tmp_path):
     path = tmp_path / "bullets.jsonl"
-    env = HeliAttack2Env(render_mode=None)
+    env = HeliAttack2Env(render_mode=None, skip_intro=True)
     obs, _info = env.reset(seed=11)
 
     with JsonlReplayWriter(path, env, 11, obs) as writer:

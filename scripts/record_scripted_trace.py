@@ -240,6 +240,7 @@ def record_scenario(
     selected_frames: Iterable[int] = DEFAULT_SELECTED_FRAMES,
     write_screenshots: bool = True,
     write_gif: bool = False,
+    skip_intro: bool = False,
 ) -> TraceResult:
     scenario = SCENARIOS[scenario_name]
     actions = clipped_actions(scenario, frame_count)
@@ -254,7 +255,11 @@ def record_scenario(
     gif_path = out_path / f"{scenario.name}.gif"
 
     needs_render = write_screenshots or write_gif
-    env = HeliAttack2Env(render_mode="rgb_array" if needs_render else None, auto_render=False)
+    env = HeliAttack2Env(
+        render_mode="rgb_array" if needs_render else None,
+        auto_render=False,
+        skip_intro=skip_intro,
+    )
     obs, _info = env.reset(seed=seed)
     initial_state = snapshot(env)
     selected_states: dict[int, dict] = {0: initial_state}
@@ -412,6 +417,8 @@ def main() -> None:
     parser.add_argument("--out-dir", type=Path, default=Path("reports/parity_traces"))
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--frames", type=parse_human_count, help="Override scenario frame count.")
+    parser.add_argument("--skip-intro", dest="skip_intro", action="store_true", default=False)
+    parser.add_argument("--no-skip-intro", dest="skip_intro", action="store_false")
     parser.add_argument("--no-screenshots", action="store_true")
     parser.add_argument("--gif", action="store_true", help="Also write selected-frame GIFs.")
     args = parser.parse_args()
@@ -424,6 +431,7 @@ def main() -> None:
             frame_count=args.frames,
             write_screenshots=not args.no_screenshots,
             write_gif=args.gif,
+            skip_intro=args.skip_intro,
         )
         print(
             f"{result.scenario}: replay={result.replay_path} "

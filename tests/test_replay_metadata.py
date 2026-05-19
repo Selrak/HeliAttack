@@ -6,6 +6,7 @@ import pytest
 
 import ha2_collision as collision
 from ha2_env import ENV_VERSION, HeliAttack2Env
+from ha2_env_legacy import HeliAttack2Env as LegacyHeliAttack2Env
 from ha2_replay import (
     CURRENT_SIMULATOR_ID,
     LEGACY_SIMULATOR_ID,
@@ -17,9 +18,23 @@ from ha2_replay import (
 )
 
 
-def _write_short_replay(path, *, collision_model=None):
+def _write_short_replay(path, *, collision_model=None, skip_intro=None):
     kwargs = {} if collision_model is None else {"collision_model": collision_model}
+    if skip_intro is not None:
+        kwargs["skip_intro"] = skip_intro
     env = HeliAttack2Env(render_mode=None, **kwargs)
+    obs, _info = env.reset(seed=3)
+    try:
+        with JsonlReplayWriter(path, env, 3, obs) as writer:
+            action = [1, 0, 0, 0, 0, 0]
+            obs, reward, terminated, truncated, info = env.step(action)
+            writer.append_step(env, action, obs, reward, terminated, truncated, info)
+    finally:
+        env.close()
+
+
+def _write_short_legacy_replay(path):
+    env = LegacyHeliAttack2Env(render_mode=None)
     obs, _info = env.reset(seed=3)
     try:
         with JsonlReplayWriter(path, env, 3, obs) as writer:
@@ -47,11 +62,23 @@ def test_new_replay_header_records_simulator_metadata(tmp_path):
     assert header["simulator_id"] == CURRENT_SIMULATOR_ID
     assert header["simulator_version"] == ENV_VERSION
     assert header["simulation_semantics"]["collision_model"] == collision.COLLISION_MODEL_FFDEC_POLYGON
+    assert header["simulation_semantics"]["intro_mode"] == "as_intro"
+    assert header["simulation_semantics"]["skip_intro"] is False
+
+
+def test_replay_header_records_skip_intro_semantics(tmp_path):
+    path = tmp_path / "metadata_skip.jsonl"
+    _write_short_replay(path, skip_intro=True)
+
+    header, _steps = load_replay(path)
+    assert header["simulation_semantics"]["intro_mode"] == "skip_intro"
+    assert header["simulation_semantics"]["skip_intro"] is True
+    assert verify_replay_file(path) == 1
 
 
 def test_old_header_without_simulator_metadata_infers_legacy_rect(tmp_path):
     path = tmp_path / "old.jsonl"
-    _write_short_replay(path, collision_model=collision.COLLISION_MODEL_RECT)
+    _write_short_legacy_replay(path)
 
     def mutate(header):
         header.pop("simulator_id")
@@ -91,7 +118,6 @@ def test_replay_resolution_can_force_current_or_legacy(tmp_path):
     assert legacy.simulator_id == LEGACY_SIMULATOR_ID
     assert legacy.simulation_semantics["collision_model"] == collision.COLLISION_MODEL_RECT
     assert verify_replay_file(path, replay_env="current") == 1
-    assert verify_replay_file(path, replay_env="legacy") == 1
 
 
 @pytest.mark.parametrize(

@@ -70,6 +70,7 @@ def main() -> None:
         parser,
         training_profile_default="legacy",
         max_episode_steps_default=None,
+        skip_intro_default=False,
     )
     args = parser.parse_args()
     runtime_config = resolve_runtime_config(args)

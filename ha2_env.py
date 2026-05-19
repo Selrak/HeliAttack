@@ -21,7 +21,7 @@ import ha2_constants as const
 REPO_ROOT = Path(__file__).resolve().parent
 HA2_ASSET_DIR = REPO_ROOT / "assets_ffdec"
 ENV_NAME = "HeliAttack2Env"
-ENV_VERSION = "0.8"
+ENV_VERSION = "0.9"
 
 AIM_BINS = 32
 DEFAULT_AIM_BIN = 0
@@ -57,6 +57,10 @@ HELI_SHOOT_RELOAD_BASE = 16
 ENEMY_BULLET_SPEED = 7.0
 ENEMY_BULLET_DAMAGE = 10
 ENEMY_BULLET_VISIBILITY_MARGIN = 8.0
+INTRO_MODE_AS = "as_intro"
+INTRO_MODE_SKIP = "skip_intro"
+INTRO_MODE_LEGACY_FALL_PROXY = "legacy_fall_proxy"
+INTRO_MODES = {INTRO_MODE_AS, INTRO_MODE_SKIP, INTRO_MODE_LEGACY_FALL_PROXY}
 AS_STW = math.ceil(const.SCREEN_WIDTH / const.TILE_SIZE)
 AS_STH = math.ceil(const.SCREEN_HEIGHT / const.TILE_SIZE)
 AS_SPW = AS_STW * const.TILE_SIZE
@@ -184,6 +188,8 @@ class HeliAttack2Env(gym.Env):
         reward_profile: str = "combat_default",
         pressure_profile: str = PRESSURE_PROFILE_NORMAL,
         collision_model: str = collision.COLLISION_MODEL_FFDEC_POLYGON,
+        skip_intro: bool = False,
+        intro_mode: str | None = None,
         max_episode_steps: int | None = None,
     ):
         super().__init__()
@@ -212,6 +218,12 @@ class HeliAttack2Env(gym.Env):
                 f"Unknown collision_model {collision_model!r}; "
                 f"expected one of {sorted(collision.COLLISION_MODELS)}"
             )
+        if intro_mode is None:
+            intro_mode = INTRO_MODE_SKIP if skip_intro else INTRO_MODE_AS
+        if intro_mode not in INTRO_MODES:
+            raise ValueError(
+                f"Unknown intro_mode {intro_mode!r}; expected one of {sorted(INTRO_MODES)}"
+            )
         self.render_mode = render_mode
         self.assets_dir = Path(assets_dir) if assets_dir is not None else HA2_ASSET_DIR
         self.auto_render = auto_render
@@ -219,6 +231,8 @@ class HeliAttack2Env(gym.Env):
         self.respawn_helis = bool(respawn_helis)
         self.training_profile = training_profile
         self.collision_model = collision_model
+        self.intro_mode = intro_mode
+        self.skip_intro = intro_mode == INTRO_MODE_SKIP
         self.max_episode_steps = None if max_episode_steps is None else int(max_episode_steps)
 
         # ACTION SPACE: [Move(left/idle/right), Jump, Duck, Boost, AimBin, Fire]
@@ -487,6 +501,8 @@ class HeliAttack2Env(gym.Env):
         spawn_tx, _spawn_ty = const.PLAYER_SPAWN_INDEX
         self._x = (spawn_tx * const.TILE_SIZE) + (const.TILE_SIZE / 2)
         self._y = -50.0
+        if self.intro_mode == INTRO_MODE_SKIP:
+            self._x, self._y = self._skip_intro_start_position()
 
         self.xspeed = 0.0
         self.yspeed = 0.0
@@ -559,7 +575,15 @@ class HeliAttack2Env(gym.Env):
         self.helis = 0
         self.rthelis = 0
         self.level = 0
-        self.pending_default_heli = bool(self.spawn_default_heli)
+        self.intro_active = self.intro_mode == INTRO_MODE_AS
+        self.intro_fall = False
+        self.intro_chute_xscale = 100.0 if self.intro_active else 0.0
+        self.intro_chute_visible = self.intro_active
+        self.intro_stepc = 0.0
+        self.gamestarted = 1 if self.intro_mode == INTRO_MODE_SKIP else 0
+        self.pending_default_heli = bool(
+            self.spawn_default_heli and self.intro_mode in (INTRO_MODE_AS, INTRO_MODE_LEGACY_FALL_PROXY)
+        )
         self.default_heli_spawned = False
         self.last_player_damage_tick = None
         self.last_player_damage_amount = 0
@@ -582,6 +606,11 @@ class HeliAttack2Env(gym.Env):
         self.last_camera = self.get_camera()
         self.last_gun_event = self._empty_gun_event()
         self.last_enemy_event = self._empty_enemy_event()
+
+        if self.intro_mode == INTRO_MODE_SKIP and self.spawn_default_heli:
+            enemy_id = self._add_enemy(HELI_DEFAULT_HEALTH)
+            self.default_heli_spawned = True
+            self.last_enemy_event["spawned_enemy_ids"].append(enemy_id)
 
         if self.auto_render and self.render_mode in ["human", "rgb_array"]:
             self.render()
@@ -812,6 +841,41 @@ class HeliAttack2Env(gym.Env):
                             if not hold:
                                 return 1
         return count
+
+    def _standing_bbox_tiles(self, x: float, y: float) -> tuple[int, int, int, int]:
+        tilex = math.floor((x + 1 + self.width / 2 - self.defplayerwidth / 2) / const.TILE_SIZE)
+        tile2x = math.floor((x + self.width / 2 + self.defplayerwidth / 2) / const.TILE_SIZE)
+        tiley = math.floor((y + 1 + self.height / 2 - self.defplayerheight / 2) / const.TILE_SIZE)
+        tile2y = math.floor((y + self.height / 2 + self.defplayerheight / 2) / const.TILE_SIZE)
+        return tilex, tile2x, tiley, tile2y
+
+    def _skip_intro_start_position(self) -> tuple[float, float]:
+        target_x = max(0.0, 3.0 * self.width)
+        candidate_xs = [target_x]
+        for offset in range(1, 80):
+            delta = float(offset * const.TILE_SIZE)
+            candidate_xs.append(max(0.0, target_x - delta))
+            candidate_xs.append(min(self.map_pixel_width - self.width, target_x + delta))
+
+        for x in candidate_xs:
+            tilex = math.floor((x + 1 + self.width / 2 - self.defplayerwidth / 2) / const.TILE_SIZE)
+            tile2x = math.floor((x + self.width / 2 + self.defplayerwidth / 2) / const.TILE_SIZE)
+            if tilex < 0 or tile2x >= self.map_width:
+                continue
+            for floor_tile_y in range(1, self.map_height):
+                if not self._hit_check(floor_tile_y, tilex, floor_tile_y, tile2x, 0, 0, 0):
+                    continue
+                y = (
+                    floor_tile_y * const.TILE_SIZE
+                    - self.height
+                    + (self.height - self.defplayerheight) / 2
+                    - 1
+                )
+                _tilex, _tile2x, tiley, tile2y = self._standing_bbox_tiles(x, y)
+                body_clear = not self._hit_check(tiley, tilex, tile2y - 1, tile2x, 0, 0, 0)
+                if body_clear:
+                    return float(x), float(y)
+        raise RuntimeError("Could not find a deterministic skip_intro ground start position")
 
     def _normalize_action(self, action) -> list[int]:
         values = [int(v) for v in np.asarray(action, dtype=np.int64).flatten().tolist()]
@@ -1181,12 +1245,62 @@ class HeliAttack2Env(gym.Env):
     def _maybe_spawn_default_heli(self, contact: dict[str, Any], event: dict[str, Any]) -> None:
         if not self.pending_default_heli or not contact.get("ground"):
             return
-        # AS adds the first Heli after heroStart completes; first ground contact is
-        # the current minimal proxy until the parachute/start lifecycle exists.
         enemy_id = self._add_enemy(HELI_DEFAULT_HEALTH)
         self.pending_default_heli = False
         self.default_heli_spawned = True
+        self.gamestarted = 1
         event["spawned_enemy_ids"].append(enemy_id)
+
+    def _complete_as_intro(self, event: dict[str, Any]) -> None:
+        self.intro_active = False
+        self.gamestarted = 1
+        self.intro_chute_xscale = 0.0
+        self.intro_chute_visible = False
+        if self.pending_default_heli:
+            enemy_id = self._add_enemy(HELI_DEFAULT_HEALTH)
+            self.pending_default_heli = False
+            self.default_heli_spawned = True
+            event["spawned_enemy_ids"].append(enemy_id)
+
+    def _update_as_intro(self, event: dict[str, Any]) -> dict[str, Any]:
+        self.intro_stepc += 1.0
+        if self.intro_stepc > 1.0:
+            self.yspeed = 2.0
+            self.intro_stepc -= 1.0
+
+        probe_y = math.floor((self._y + self.height) / const.TILE_SIZE)
+        probe_x = math.floor((self._x + self.width / 2.0) / const.TILE_SIZE)
+        self.ychange = self.yspeed + 5.0
+        self.xchange = 0.0
+        self._y += self.yspeed
+        self._y += 5.0
+
+        if self.intro_fall:
+            self.intro_chute_xscale -= 10.0
+            if self.intro_chute_xscale < 0.0:
+                self._complete_as_intro(event)
+        else:
+            self.intro_chute_xscale = min(100.0, self.intro_chute_xscale + 10.0)
+            lookahead_y = probe_y + 5
+            if (
+                probe_y > 0
+                and 0 <= lookahead_y < self.map_height
+                and 0 <= probe_x < self.map_width
+                and self.map_data[lookahead_y][probe_x][0] != 0
+            ):
+                self.intro_fall = True
+
+        if self._y + self.height - (-self.world_y) > const.SCREEN_HEIGHT - const.SCREEN_HEIGHT / 4:
+            self.world_y = -(self._y + self.height) + const.SCREEN_HEIGHT - const.SCREEN_HEIGHT / 4
+            self._scroll_world()
+
+        return {
+            "active": bool(self.intro_active),
+            "fall": bool(self.intro_fall),
+            "chute_xscale": round(float(self.intro_chute_xscale), 8),
+            "chute_visible": bool(self.intro_chute_visible),
+            "stepc": round(float(self.intro_stepc), 8),
+        }
 
     def _spawn_replacement_heli(self, active: list[dict[str, Any]], event: dict[str, Any]) -> None:
         replacement = self._make_default_enemy(HELI_DEFAULT_HEALTH)
@@ -1441,6 +1555,104 @@ class HeliAttack2Env(gym.Env):
 
         return event
 
+    def _finish_step(
+        self,
+        *,
+        action: list[int],
+        move_action: int,
+        previous_x: float,
+        before_score: int,
+        contact: dict[str, Any],
+        gun_event: dict[str, Any],
+        enemy_event: dict[str, Any],
+    ):
+        self.lastHealth = int(self.health)
+        fell = bool(self._y > self.map_height * const.TILE_SIZE)
+        player_dead = bool(self.health <= 0)
+        self.episode_step_count += 1
+
+        reward_breakdown = None
+        termination_reason = "none"
+        truncated = False
+        if self.training_profile == "legacy":
+            reward = 0.1
+            terminated = fell
+            if terminated:
+                reward = -10.0
+                termination_reason = "fall"
+        else:
+            killed_helis = len(enemy_event["killed_enemy_ids"])
+            score_delta = max(0, int(self.score) - before_score)
+            player_damage = int(enemy_event["player_damage"])
+            terminated = fell or player_dead
+            if fell:
+                termination_reason = "fall"
+            elif player_dead:
+                termination_reason = "player_death"
+            elif (
+                self.max_episode_steps is not None
+                and self.episode_step_count >= self.max_episode_steps
+            ):
+                truncated = True
+                termination_reason = "time_limit"
+
+            if self.reward_profile == "combat_default":
+                reward_breakdown = {
+                    "living": 0.01,
+                    "enemy_damage": 0.05 * float(score_delta),
+                    "kill": 5.0 * float(killed_helis),
+                    "player_damage": -0.10 * float(player_damage),
+                    "terminal": -25.0 if terminated else 0.0,
+                }
+            elif self.reward_profile == "defense_v1":
+                at_left = self._x < 1.0
+                at_right = self._x > (self.map_pixel_width - self.playerwidth - 1.0)
+                camping_penalty = 0.0
+                if at_left and self.current_consecutive_frames_at_left_edge > 30:
+                    camping_penalty -= 0.01
+                elif at_right and self.current_consecutive_frames_at_right_edge > 30:
+                    camping_penalty -= 0.01
+
+                input_inefficiency = 0.0
+                dx = self._x - previous_x
+                if move_action == 0 and dx > -0.0001:
+                    input_inefficiency -= 0.01
+                elif move_action == 2 and dx < 0.0001:
+                    input_inefficiency -= 0.01
+
+                reward_breakdown = {
+                    "living": 0.0,
+                    "enemy_damage": 0.03 * float(score_delta),
+                    "kill": 3.0 * float(killed_helis),
+                    "player_damage": -1.0 * float(player_damage),
+                    "terminal": -50.0 if terminated else 0.0,
+                    "camping": camping_penalty,
+                    "inefficiency": input_inefficiency,
+                }
+            else:
+                raise ValueError(f"Unknown reward_profile: {self.reward_profile}")
+
+            reward = float(sum(reward_breakdown.values()))
+
+        self.tick += 1
+        self._update_movement_diagnostics(previous_x, move_action)
+        self._update_visible_enemy_bullet_diagnostics()
+        self.last_action = action
+        self.last_reward = float(reward)
+        self.last_terminated = terminated
+        self.last_truncated = truncated
+        self.last_termination_reason = termination_reason
+        self.last_reward_breakdown = reward_breakdown
+        self.last_contact = contact
+        self.last_camera = self.get_camera()
+        self.last_gun_event = gun_event
+        self.last_enemy_event = enemy_event
+
+        if self.auto_render and self.render_mode in ["human", "rgb_array"]:
+            self.render()
+
+        return self._get_obs(), reward, terminated, truncated, self.get_debug_info()
+
     def step(self, action):
         action = self._normalize_action(action)
         move_action, jump_action, duck_action, boost_action, aim_bin, fire_action = action
@@ -1462,6 +1674,18 @@ class HeliAttack2Env(gym.Env):
         enemy_event["killed_enemy_ids"].extend(enemy_update_event["killed_enemy_ids"])
         enemy_event["player_damage"] += int(enemy_update_event["player_damage"])
         self.total_player_damage += int(enemy_event["player_damage"])
+
+        if self.intro_active:
+            self._update_as_intro(enemy_event)
+            return self._finish_step(
+                action=action,
+                move_action=move_action,
+                previous_x=previous_x,
+                before_score=before_score,
+                contact=contact,
+                gun_event=gun_event,
+                enemy_event=enemy_event,
+            )
 
         # Input diagnostics
         if move_action == 0:
@@ -1689,93 +1913,15 @@ class HeliAttack2Env(gym.Env):
         gun_event.update(self._update_machinegun(aim_bin, fire_action))
         self._update_world_after_player()
         self._maybe_spawn_default_heli(contact, enemy_event)
-        self.lastHealth = int(self.health)
-
-        fell = bool(self._y > self.map_height * const.TILE_SIZE)
-        player_dead = bool(self.health <= 0)
-        self.episode_step_count += 1
-
-        reward_breakdown = None
-        termination_reason = "none"
-        truncated = False
-        if self.training_profile == "legacy":
-            reward = 0.1
-            terminated = fell
-            if terminated:
-                reward = -10.0
-                termination_reason = "fall"
-        else:
-            killed_helis = len(enemy_event["killed_enemy_ids"])
-            score_delta = max(0, int(self.score) - before_score)
-            player_damage = int(enemy_event["player_damage"])
-            terminated = fell or player_dead
-            if fell:
-                termination_reason = "fall"
-            elif player_dead:
-                termination_reason = "player_death"
-            elif (
-                self.max_episode_steps is not None
-                and self.episode_step_count >= self.max_episode_steps
-            ):
-                truncated = True
-                termination_reason = "time_limit"
-
-            if self.reward_profile == "combat_default":
-                reward_breakdown = {
-                    "living": 0.01,
-                    "enemy_damage": 0.05 * float(score_delta),
-                    "kill": 5.0 * float(killed_helis),
-                    "player_damage": -0.10 * float(player_damage),
-                    "terminal": -25.0 if terminated else 0.0,
-                }
-            elif self.reward_profile == "defense_v1":
-                at_left = self._x < 1.0
-                at_right = self._x > (self.map_pixel_width - self.playerwidth - 1.0)
-                camping_penalty = 0.0
-                if at_left and self.current_consecutive_frames_at_left_edge > 30:
-                    camping_penalty -= 0.01
-                elif at_right and self.current_consecutive_frames_at_right_edge > 30:
-                    camping_penalty -= 0.01
-                    
-                input_inefficiency = 0.0
-                dx = self._x - previous_x
-                if move_action == 0 and dx > -0.0001:
-                    input_inefficiency -= 0.01
-                elif move_action == 2 and dx < 0.0001:
-                    input_inefficiency -= 0.01
-                    
-                reward_breakdown = {
-                    "living": 0.0,
-                    "enemy_damage": 0.03 * float(score_delta),
-                    "kill": 3.0 * float(killed_helis),
-                    "player_damage": -1.0 * float(player_damage),
-                    "terminal": -50.0 if terminated else 0.0,
-                    "camping": camping_penalty,
-                    "inefficiency": input_inefficiency,
-                }
-            else:
-                raise ValueError(f"Unknown reward_profile: {self.reward_profile}")
-                
-            reward = float(sum(reward_breakdown.values()))
-
-        self.tick += 1
-        self._update_movement_diagnostics(previous_x, move_action)
-        self._update_visible_enemy_bullet_diagnostics()
-        self.last_action = action
-        self.last_reward = float(reward)
-        self.last_terminated = terminated
-        self.last_truncated = truncated
-        self.last_termination_reason = termination_reason
-        self.last_reward_breakdown = reward_breakdown
-        self.last_contact = contact
-        self.last_camera = self.get_camera()
-        self.last_gun_event = gun_event
-        self.last_enemy_event = enemy_event
-
-        if self.auto_render and self.render_mode in ["human", "rgb_array"]:
-            self.render()
-
-        return self._get_obs(), reward, terminated, truncated, self.get_debug_info()
+        return self._finish_step(
+            action=action,
+            move_action=move_action,
+            previous_x=previous_x,
+            before_score=before_score,
+            contact=contact,
+            gun_event=gun_event,
+            enemy_event=enemy_event,
+        )
 
     def get_camera(self) -> tuple[float, float]:
         return float(self.world_x), float(self.world_y)
@@ -1837,7 +1983,9 @@ class HeliAttack2Env(gym.Env):
 
         self._draw_enemies(canvas, cam_x, cam_y)
 
-        if self.duck:
+        if self.intro_active:
+            sprite = self.images.get("jump2")
+        elif self.duck:
             sprite = self.images.get("duck")
         elif self.jump:
             sprite = self.images.get("jump2") if self.jump2 else self.images.get("jump")
@@ -1850,6 +1998,13 @@ class HeliAttack2Env(gym.Env):
         if sprite:
             sprite_x = self._x + cam_x + self.width / 2 - sprite.get_width() / 2
             sprite_y = self._y + cam_y + self.height - sprite.get_height()
+            chute = self.images.get("chute")
+            if self.intro_chute_visible and chute is not None and self.intro_chute_xscale > 0:
+                chute_width = max(1, round(chute.get_width() * self.intro_chute_xscale / 100.0))
+                chute_scaled = pygame.transform.smoothscale(chute, (chute_width, chute.get_height()))
+                chute_x = self._x + cam_x + self.width / 2 - chute_scaled.get_width() / 2
+                chute_y = sprite_y - chute_scaled.get_height() + 8
+                canvas.blit(chute_scaled, (chute_x, chute_y))
             canvas.blit(sprite, (sprite_x, sprite_y))
         else:
             rect_x = self._x + self.width / 2 - self.playerwidth / 2 + cam_x
@@ -2039,6 +2194,7 @@ class HeliAttack2Env(gym.Env):
             f"pos=({self._x:.2f},{self._y:.2f}) speed=({self.xspeed:.2f},{self.yspeed:.2f})",
             f"jump={self.jump}/{self.jump2} duck={self.duck} hjump={self.hjump} hyper={self.hyperjump}",
             f"action={self.last_action} camera=({self.last_camera[0]:.1f},{self.last_camera[1]:.1f})",
+            f"intro={self.intro_mode} active={self.intro_active} fall={self.intro_fall} chute={self.intro_chute_xscale:.1f}",
             f"gun=MachineGun rot={self.gun_rotation:.1f} reload={self._state_value(self.gun_reloadtime)} shots={self.player_shot_attempts}/{self.player_bullets_spawned} bullets={len(self.bullets)}",
             f"combat=health:{self.health} last_damage:{self.last_player_damage_amount}@{self.last_player_damage_tick} score:{self.score} hits:{self.hits} helis:{self.helis}",
             f"enemies={len(self.enemies)} hp=[{enemy_healths}] kills={self.rthelis} pending_heli={self.pending_default_heli}",
@@ -2199,6 +2355,14 @@ class HeliAttack2Env(gym.Env):
             "hjump": int(self.hjump),
             "boostK": int(self.boostK),
             "facing_right": bool(self.facing_right),
+            "intro_mode": self.intro_mode,
+            "skip_intro": bool(self.skip_intro),
+            "intro_active": bool(self.intro_active),
+            "intro_fall": bool(self.intro_fall),
+            "intro_chute_xscale": round(float(self.intro_chute_xscale), 8),
+            "intro_chute_visible": bool(self.intro_chute_visible),
+            "intro_stepc": round(float(self.intro_stepc), 8),
+            "gamestarted": int(self.gamestarted),
             "pending_default_heli": bool(self.pending_default_heli),
             "default_heli_spawned": bool(self.default_heli_spawned),
             "respawn_helis": bool(self.respawn_helis),
@@ -2268,6 +2432,14 @@ class HeliAttack2Env(gym.Env):
         self.hjump = int(state["hjump"])
         self.boostK = int(state["boostK"])
         self.facing_right = bool(state["facing_right"])
+        self.intro_mode = str(state.get("intro_mode", self.intro_mode))
+        self.skip_intro = bool(state.get("skip_intro", self.intro_mode == INTRO_MODE_SKIP))
+        self.intro_active = bool(state.get("intro_active", False))
+        self.intro_fall = bool(state.get("intro_fall", False))
+        self.intro_chute_xscale = float(state.get("intro_chute_xscale", 0.0))
+        self.intro_chute_visible = bool(state.get("intro_chute_visible", False))
+        self.intro_stepc = float(state.get("intro_stepc", 0.0))
+        self.gamestarted = int(state.get("gamestarted", 1 if not self.intro_active else 0))
         self.pending_default_heli = bool(state.get("pending_default_heli", False))
         self.default_heli_spawned = bool(state.get("default_heli_spawned", bool(state.get("enemies"))))
         self.respawn_helis = bool(state.get("respawn_helis", self.respawn_helis))
@@ -2443,6 +2615,13 @@ class HeliAttack2Env(gym.Env):
             "state_hash": self.state_hash(),
             "pressure_profile": self.pressure_profile,
             "collision_model": self.collision_model,
+            "skip_intro": bool(self.skip_intro),
+            "intro_mode": self.intro_mode,
+            "intro_active": bool(self.intro_active),
+            "intro_fall": bool(self.intro_fall),
+            "intro_chute_xscale": round(float(self.intro_chute_xscale), 8),
+            "intro_chute_visible": bool(self.intro_chute_visible),
+            "gamestarted": int(self.gamestarted),
             "enemy_fire_period": int(self._heli_shoot_period()),
             "enemy_fire_interval_multiplier": int(self.enemy_fire_interval_multiplier),
             "state": self.get_state(),

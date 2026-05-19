@@ -21,6 +21,13 @@ Durable HA2 parity facts confirmed from static ActionScript and FFDEC exports.
 
 ## Simulator Status - 2026-05-19
 
-- `collision_model="rect"` remains the default simulator collision model.
-- `collision_model="ffdec_polygon"` is implemented as an opt-in model using the FFDEC hit shapes above with Flash-style affine transforms.
-- Remaining risk: live Flash rasterization/sub-pixel behavior and full non-duck animation-frame mapping still need targeted validation before making `ffdec_polygon` the default.
+- `collision_model="ffdec_polygon"` is the default simulator collision model; explicit `collision_model="rect"` remains available.
+- Remaining risk: live Flash rasterization/sub-pixel behavior and full non-duck animation-frame mapping still need targeted validation.
+
+## HeroStart / Parachute Intro - 2026-05-19
+
+- `assignents()` clears map marker `32`, sets `player._x = x * tileWidth + tileWidth / 2`, and sets `player._y = -50`.
+- `heroStart(timeStep)` forces `this.gfx.gotoAndStop(6)`, increments `stepc`, sets `yspeed=2` once `stepc > 1`, then moves `this._y += this.yspeed * timeStep` and `this._y += 5`.
+- Before closing, `heroStart` expands `this.gfx.chute._xscale` up to 100 and switches to falling when `y > 0 && map[y + 5][x][0] != 0`.
+- During falling, it shrinks `this.gfx.chute._xscale` by `10 * timeStep`; once below 0 it hides the chute, switches `this.action = heroAction`, sets `gamestarted = 1`, and calls `addEnemy(300)`.
+- The evolving Python env now implements this as `intro_mode="as_intro"` when `skip_intro=False`; `skip_intro=True` is a deliberate fast-start mode for training/scripts.

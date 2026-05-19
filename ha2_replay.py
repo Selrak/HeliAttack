@@ -13,6 +13,9 @@ from ha2_env import (
     ENV_NAME,
     ENV_VERSION,
     HeliAttack2Env,
+    INTRO_MODE_AS,
+    INTRO_MODE_LEGACY_FALL_PROXY,
+    INTRO_MODE_SKIP,
     get_full_action,
     get_policy_action,
     policy_action_space_nvec,
@@ -75,6 +78,8 @@ def _simulation_semantics_for_env(env: Any) -> dict[str, Any]:
     base_env = env.unwrapped
     return {
         "collision_model": getattr(base_env, "collision_model", collision.COLLISION_MODEL_RECT),
+        "intro_mode": getattr(base_env, "intro_mode", INTRO_MODE_AS),
+        "skip_intro": bool(getattr(base_env, "skip_intro", False)),
     }
 
 
@@ -119,6 +124,14 @@ def recorded_replay_simulator_config(header: dict[str, Any]) -> ReplaySimulatorC
     collision_model = _validate_collision_model(semantics.get("collision_model"))
     semantics = dict(semantics)
     semantics["collision_model"] = collision_model
+    if simulator_id == CURRENT_SIMULATOR_ID:
+        intro_mode = semantics.get("intro_mode")
+        if intro_mode is None:
+            intro_mode = INTRO_MODE_LEGACY_FALL_PROXY
+        semantics["intro_mode"] = str(intro_mode)
+        semantics["skip_intro"] = bool(
+            semantics.get("skip_intro", intro_mode == INTRO_MODE_SKIP)
+        )
 
     if simulator_id == LEGACY_SIMULATOR_ID and collision_model != collision.COLLISION_MODEL_RECT:
         raise ValueError("ha2_env_legacy replays only support collision_model='rect'")
@@ -148,6 +161,8 @@ def resolve_replay_simulator_config(
 
     if replay_env == REPLAY_ENV_CURRENT:
         semantics = dict(recorded.recorded_simulation_semantics)
+        semantics.setdefault("intro_mode", INTRO_MODE_AS)
+        semantics.setdefault("skip_intro", False)
         return ReplaySimulatorConfig(
             simulator_id=CURRENT_SIMULATOR_ID,
             simulator_version=ENV_VERSION,
@@ -202,6 +217,8 @@ def make_replay_env(
     if config.simulator_id == CURRENT_SIMULATOR_ID:
         kwargs["auto_render"] = auto_render
         kwargs["collision_model"] = config.simulation_semantics["collision_model"]
+        kwargs["intro_mode"] = config.simulation_semantics.get("intro_mode", INTRO_MODE_AS)
+        kwargs["skip_intro"] = bool(config.simulation_semantics.get("skip_intro", False))
         return HeliAttack2Env(**kwargs)
 
     from ha2_env_legacy import HeliAttack2Env as LegacyHeliAttack2Env

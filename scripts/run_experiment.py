@@ -77,6 +77,7 @@ def main(args_list: list[str] | None = None) -> None:
         "--pressure-profile", runtime_config.pressure_profile,
         "--control-mode", runtime_config.control_mode,
         "--max-episode-steps", str(runtime_config.max_episode_steps),
+        "--skip-intro" if runtime_config.skip_intro else "--no-skip-intro",
         "--no-wandb-finish",
         "--timing-profile", args.timing_profile,
     ]
@@ -154,6 +155,7 @@ def main(args_list: list[str] | None = None) -> None:
             "--pressure-profile", runtime_config.pressure_profile,
             "--control-mode", runtime_config.control_mode,
             "--max-episode-steps", str(runtime_config.max_episode_steps),
+            "--skip-intro" if runtime_config.skip_intro else "--no-skip-intro",
         ]
         if args.save_replays:
             eval_args.append("--save-replays")
@@ -375,8 +377,9 @@ def main(args_list: list[str] | None = None) -> None:
             "training_profile": runtime_config.training_profile,
             "control_mode": runtime_config.control_mode,
             "reward_profile": runtime_config.reward_profile,
-            "pressure_profile": runtime_config.pressure_profile,
-            "resume_from": str(args.resume_from) if args.resume_from is not None else None,
+        "pressure_profile": runtime_config.pressure_profile,
+        "skip_intro": runtime_config.skip_intro,
+        "resume_from": str(args.resume_from) if args.resume_from is not None else None,
             "reset_num_timesteps": effective_reset_num_timesteps,
             "fine_tune_timesteps": int(args.total_timesteps) if args.resume_from is not None else None,
         }

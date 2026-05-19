@@ -1582,3 +1582,27 @@ Add a cross-platform `scripts.evaluate_matrix` runner for model/pressure evaluat
 - Commands run: `python -m py_compile ha2_env.py ha2_collision.py ha2_replay.py`; `python -m pytest tests/test_collision_model.py`; `python -m pytest tests/test_replay_metadata.py`; `python -m scripts.compare_collision_models`; `python -m pytest tests/test_scripted_trace.py::test_scripted_heli_shoots_hero_trace_summary`; `python -m pytest`.
 - Results: py_compile passed; collision tests passed (`15 passed`); replay metadata tests passed (`7 passed`); comparison script passed; scripted trace check passed; full pytest passed (`142 passed, 3 warnings`).
 - Replay metadata: new default env replays record `simulation_semantics.collision_model="ffdec_polygon"`.
+
+## 2026-05-19 Europe/Paris - HA2 Intro And Skip-Intro Startup
+
+- Pre-existing status: modified `docs/ai/NEXT_CODEX_TASK.md`, `docs/ai/VALIDATION.md`, and untracked handoff/report artifacts were present.
+- AS facts inspected: `heroStart` uses player frame 6, moves by `yspeed + 5`, opens/closes `gfx.chute._xscale`, switches to `heroAction`, sets `gamestarted=1`, and calls `addEnemy(300)` after chute close.
+- Files changed: `ha2_env.py`, `ha2_replay.py`, `scripts/runtime_config.py`, `scripts/play_human.py`, `scripts/record_scripted_trace.py`, `scripts/train_parkour.py`, `scripts/evaluate_model.py`, `scripts/watch_model.py`, `scripts/run_experiment.py`, `scripts/play_replay.py`, replay/env/runtime tests, `docs/ai/CURRENT_STATE.md`, `docs/ai/FLASH_AS_FINDINGS.md`, `docs/ai/VALIDATION.md`, and `docs/parity_notes.md`.
+- New `ENV_VERSION`: `0.9`.
+- Startup semantics: `skip_intro=False` runs AS-backed intro and spawns the first Heli when the chute closes; `skip_intro=True` starts grounded near the left side and creates the first Heli at reset.
+- Defaults: direct env and human play use `skip_intro=False`; runtime training/evaluation config and scripted traces use `skip_intro=True` unless overridden.
+- Replay metadata now records `simulation_semantics.intro_mode` and `simulation_semantics.skip_intro`; recorded replay semantics are used by default.
+- Validation passed: py_compile for `ha2_env.py ha2_replay.py scripts/runtime_config.py`; replay metadata tests (`8 passed`); scripted trace tests (`7 passed`); env basic tests (`28 passed`); required help checks; full pytest (`144 passed, 3 warnings`).
+- Handoff bundle: `docs/ai/codex_task_bundle_20260519_182102_intro-startup.zip`.
+- Remaining approximation: live Flash visual/parachute timing has not been manually compared; old current-simulator replays without intro metadata are treated as `legacy_fall_proxy` best effort.
+- Suggested next task: Charles should manually inspect `python -m scripts.play_human` startup and one `--skip-intro` scripted/GUI replay for visual plausibility.
+
+## 2026-05-19 Europe/Paris - Scripted Trace Skip-Intro Default Fix
+
+- Files changed: `scripts/record_scripted_trace.py`, `tests/test_scripted_trace.py`, `docs/ai/CODEX_SESSION_LOG.md`.
+- Fixed `record_scripted_trace` so no CLI flag means `skip_intro=False`; `--skip-intro` now explicitly opts into fast-start traces.
+- Updated scripted trace tests that rely on fast-start combat timing to pass `skip_intro=True` explicitly.
+- Replay metadata confirmed: no flag records `simulation_semantics.skip_intro=false`; `--skip-intro` records `true`; `play_replay` continues to use recorded metadata.
+- Final local `reports/parity_traces/heli_shoots_hero_240.jsonl` was regenerated without `--skip-intro`, so it records `skip_intro=false`.
+- Commands run: `python -m scripts.record_scripted_trace --scenario heli_shoots_hero_240 --no-screenshots`; same command with `--skip-intro`; metadata header inspection; `python -m pytest tests/test_scripted_trace.py tests/test_replay_metadata.py -q`; `python -m pytest -q`.
+- Results: targeted tests passed (`16 passed`); full pytest passed (`145 passed, 3 warnings`).

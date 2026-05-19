@@ -51,6 +51,7 @@ def main() -> None:
         debug_lines=[
             f"replay={args.replay.name} step=0/{len(steps)} paused={paused}",
             f"sim={replay_config.simulator_id} collision={replay_config.simulation_semantics['collision_model']}",
+            f"intro={replay_config.simulation_semantics.get('intro_mode', 'legacy')}",
             f"pressure={header.get('pressure_profile', 'normal')}",
         ],
     )
@@ -83,6 +84,7 @@ def main() -> None:
             extra = [
                 f"replay={args.replay.name} step={index}/{len(steps)} paused={paused} fast={fast_forward}",
                 f"sim={replay_config.simulator_id} collision={replay_config.simulation_semantics['collision_model']}",
+                f"intro={replay_config.simulation_semantics.get('intro_mode', 'legacy')}",
                 f"pressure={header.get('pressure_profile', 'normal')}",
                 "controls: F1 debug F fast-forward P/Space pause N step Esc quit",
             ]

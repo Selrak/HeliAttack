@@ -4,7 +4,7 @@
 
 Inspected source: `heliattack2_scripts/ha2_core_logic/frame_19_DoAction_2.as`.
 
-- Player setup/spawn: `drawMap`, `assignents`, `heroSetup`, and `heroStart` create `hero`, clear map collision marker `32`, set `player._x = x * tileWidth + tileWidth / 2`, set `player._y = -50`, and initialize `width=48`, `height=48`, `defplayerwidth=10`, `defplayerheight=42`, `jump`, `jump2`, `duck`, `hyperjump=150`. Python appears matching for steady-state spawn/setup, but does not model the AS parachute/start transition before `heroAction`.
+- Player setup/spawn: `drawMap`, `assignents`, `heroSetup`, and `heroStart` create `hero`, clear map collision marker `32`, set `player._x = x * tileWidth + tileWidth / 2`, set `player._y = -50`, and initialize `width=48`, `height=48`, `defplayerwidth=10`, `defplayerheight=42`, `jump`, `jump2`, `duck`, `hyperjump=150`. Python now models the AS-backed parachute/start transition when `skip_intro=False`.
 - Movement/jump/duck/hyperjump: `heroAction` uses `leftkey`, `rightkey`, `duckKey`, `jumpkey`, and `boostKey`; acceleration, damping, velocity clamps, jump hold, double-jump gating, hyperjump charge/use, and ground/ceiling snap formulas are closely mirrored in Python. Status: mostly matching.
 - Casing quirk: setup defines lowercase `defplayerwidth`/`defplayerheight`, while action code reads mixed-case `defPlayerWidth`, `playerWidth`, and lowercase `playerwidth`/`playerheight`. As decompiled, this is internally inconsistent. Python normalizes to working lowercase fields, which likely preserves intended behavior but masks the exact Flash/decompiler casing question. Status: unresolved without bytecode or live Flash traces.
 - Collision and bounds: AS `hitCheck(mapa, cy, cx, cy2, cx2, type, equal, hold)` directly indexes `mapa[y][x][0]`; `heroAction` manually guards horizontal world bounds before `hitCheck` but not every vertical probe. Python bounds-checks in `_hit_check`, so it is safer than the literal AS and may hide edge quirks. Status: movement collisions are close, edge behavior uncertain.
@@ -13,7 +13,7 @@ Inspected source: `heliattack2_scripts/ha2_core_logic/frame_19_DoAction_2.as`.
 - Camera/background: AS updates `world._x/_y` only when `heroAction` threshold checks trigger, then clamps through `scrollMap`; `bglayer1._x` scrolls by half the world delta and wraps, and `bglayer1._y` depends on `(-world._y) / maxheight`. Python now keeps stateful `world_x/world_y/worldpos` for Heli/projectile logic and rendering, but parallax remains simplified.
 - Map/tile rendering: AS `drawMap` attaches `(stw + 1) x (sth + 1)` reusable tiles at `x * tileWidth - 1`, `y * tileHeight - 1`, using `arr[y][x][1] + 1`. Python uses the same FFDEC tile frame mapping and `-1` offset but draws visible tiles directly instead of recycling movie clips. Status: visual mapping likely close; scrolling implementation differs.
 - MachineGun: AS `heroSetup` initializes `guns[0]` with infinite bullets and `cgun=0`; global `guns[0]` is `MachineGun` with `reloadtime=5`, `speed=8`, and `damage=10`. AS firing uses `mouseD`, increments reload while the game is moving, fires when reload is ready, uses `gun.barrell.localToGlobal`, and `machineGun` spawns `bulletFrame` frame `1` with `rot - 2 + random(4)`. Python now mirrors the cadence, constants, deterministic local spread, bullet velocity, tile/world-bounds removal, and replay hashing. Status: functional first slice.
-- Heli enemy: Python queues the default Heli on reset, then spawns it after first ground contact using AS-style `addEnemy` offscreen coordinates. It implements AS-style `heliFrame` target/acceleration/damping/gun-aim/shoot cadence, deterministic env-local spread, enemy bullets, player damage, player-bullet damage, score/hit/kill counters, and Heli/enemy-bullet state hashing. Status: AS-backed first combat loop, not exact Flash lifecycle.
+- Heli enemy: Python queues the default Heli during AS intro and spawns it when the chute closes; `skip_intro=True` starts grounded and spawns the Heli immediately for training/scripts. It implements AS-style `heliFrame` target/acceleration/damping/gun-aim/shoot cadence, deterministic env-local spread, enemy bullets, player damage, player-bullet damage, score/hit/kill counters, and Heli/enemy-bullet state hashing. Status: AS-backed first combat loop.
 - Heli visual: FFDEC `DefineSprite_111_Heli` is rendered from visible body `images/78.png` plus pilot `77.png`; the green hidden `hit` child is collision-only. The nested gun uses `DefineSprite_107/1.png`, Heli gun placement `(11,7)` / `(-9,7)`, and MachineGun `barrell` `(22.7,-7.4)`.
 
 ## AS Audit - 2026-05-05 Heli Combat Loop
@@ -26,7 +26,7 @@ Inspected source: `heliattack2_scripts/ha2_core_logic/frame_19_DoAction_2.as`.
 
 ## AS Audit - 2026-05-05 Heli Startup/Damage Fix
 
-- AS `heroStart` calls `addEnemy(300)` only after the chute closes and gameplay switches to `heroAction`; Python now delays the default Heli until first ground contact as a minimal proxy.
+- AS `heroStart` calls `addEnemy(300)` only after the chute closes and gameplay switches to `heroAction`; Python now implements this in the default `skip_intro=False` mode.
 - The startup dart was caused by reset-time Heli spawn: early `heliFrame` Y targeting used the still-falling player Y, producing a large negative target before the Heli came back down.
 - Enemy bullet damage was mechanically present, but not visible enough in traces/overlay. Debug state and scripted summaries now report player health, last damage, and the first damaging enemy bullet/frame.
 
@@ -41,7 +41,7 @@ Inspected source: `heliattack2_scripts/ha2_core_logic/frame_19_DoAction_2.as`.
 - AS player projectiles use `enemyArray[i].hit.hitTest(this._x + world._x,this._y + world._y,1)` against the Heli nested `hit` clip, not a Python-style rectangle test.
 - AS enemy projectiles use `player.gfx.hit.hitTest(this._x + world._x,this._y + world._y,1)` against the current player graphics nested `hit` clip.
 - FFDEC SVG exports now confirm non-rectangular hidden hit shapes for Heli `DefineSprite_109`, standing player `DefineSprite_119`, and duck player `DefineSprite_123`.
-- Current Python projectile collision remains rectangle-based; see `docs/ai/HA2_COLLISION_PARITY_AUDIT.md` before changing simulator behavior.
+- Current Python projectile collision defaults to FFDEC polygon hit shapes; explicit rectangle collision remains available for comparisons.
 
 ## AS Audit - 2026-05-19 FFDEC Polygon Collision Model
 
@@ -71,14 +71,14 @@ Inspected source: `heliattack2_scripts/ha2_core_logic/frame_19_DoAction_2.as`.
 - Decompiled AS uses mixed variable casing such as `defplayerwidth` in setup and `defPlayerWidth` in action, plus `playerWidth`/`playerwidth`. Current Python uses the lowercase working fields from the previous port; exact Flash runtime behavior needs verification.
 - `hitCheck` in AS assumes map indexes are valid. Current Python bounds-checks indexes, preserving prior port behavior but possibly hiding original edge behavior.
 - Player rendering uses colored FFDEC bitmap image exports centered in the logical 48x48 hero box. Exact Flash registration point and walk animation cadence should still be verified.
-- Camera/parallax is only partly AS-style: Heli/projectiles now use stateful `world_x/world_y/worldpos`, but `heroStart` parachute startup and background parallax are still simplified.
+- Camera/parallax is only partly AS-style: Heli/projectiles now use stateful `world_x/world_y/worldpos`, but background parallax is still simplified.
 - Gun visual registration now uses FFDEC placement data provided by Charles: hero `gun` at `(24.0, 29.0)` and MachineGun `barrell` at `(22.7, -7.4)`, giving zero-rotation visual barrel origin `(46.7, 21.6)` from the Flash hero origin. Bullet spawn registration was left unchanged in this visual-only task.
 - Bullet active-region removal now uses Python `worldpos/stw/sth` plus solid-tile checks.
-- Heli spawn is delayed until first ground contact as a minimal proxy for AS `heroStart`; the actual parachute/start lifecycle is still not modeled.
+- `skip_intro=True` is intentionally non-AS: it starts the player grounded near the left side of the world and creates the first Heli immediately so training and scripted traces avoid intro dead time.
 - Heli death side effects that are not required for MachineGun-only training are omitted: random weapon rewards, powerups/drops, shards, destroyed-Heli debris, blood, sounds, and bullet-time refill.
 - Only the original player healthbar HUD is implemented; score/time/ammo/reload/hyperjump HUD elements remain future work.
 - Default Heli projectile hit detection now uses the FFDEC nested `hit` shape with frame-aware mirroring and parent rotation. The legacy rectangle remains available through explicit `collision_model="rect"` and `ha2_env_legacy.py`.
-- Heli movement and gun logic now use the inspected AS formulas, but exact parity is still blocked by missing AS `heroStart` lifecycle and unresolved casing/typo quirks.
+- Heli movement and gun logic now use the inspected AS formulas, but exact parity is still blocked by unresolved casing/typo quirks and live Flash validation of the new `heroStart` approximation.
 
 ## Intentionally Simplified For Now
 - No crates, health drops, ammo drops, weapon switching, non-basic weapons, explosions, shards, blood, sounds, bullet time, or full gameover/HUD simulation.

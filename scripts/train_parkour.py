@@ -63,6 +63,7 @@ class EnvFactory:
     control_mode: str = "full"
     reward_profile: str = "combat_default"
     pressure_profile: str = "normal"
+    skip_intro: bool = True
 
     def __call__(self):
         from stable_baselines3.common.monitor import Monitor
@@ -76,6 +77,7 @@ class EnvFactory:
                     reward_profile=self.reward_profile,
                     pressure_profile=self.pressure_profile,
                     max_episode_steps=self.max_episode_steps,
+                    skip_intro=self.skip_intro,
                 )
             ),
         )
@@ -96,6 +98,7 @@ def make_vec_env(
     control_mode: str = "full",
     reward_profile: str = "combat_default",
     pressure_profile: str = "normal",
+    skip_intro: bool = True,
 ):
     env_fns = [
         EnvFactory(
@@ -106,6 +109,7 @@ def make_vec_env(
             control_mode=control_mode,
             reward_profile=reward_profile,
             pressure_profile=pressure_profile,
+            skip_intro=skip_intro,
         )
         for i in range(n_envs)
     ]
@@ -255,6 +259,7 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         "pressure_profile": runtime_config.pressure_profile,
         "control_mode": runtime_config.control_mode,
         "max_episode_steps": runtime_config.max_episode_steps,
+        "skip_intro": runtime_config.skip_intro,
         "wandb": args.wandb,
         "tensorboard_log": str(tensorboard_log),
         "mirror_root_models": bool(args.mirror_root_models),
@@ -299,6 +304,7 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         control_mode=runtime_config.control_mode,
         reward_profile=runtime_config.reward_profile,
         pressure_profile=runtime_config.pressure_profile,
+        skip_intro=runtime_config.skip_intro,
         max_episode_steps=runtime_config.max_episode_steps,
         monitor_cls=Monitor,
         dummy_vec_env_cls=DummyVecEnv,
@@ -334,6 +340,7 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
             control_mode=runtime_config.control_mode,
             reward_profile=runtime_config.reward_profile,
             pressure_profile=runtime_config.pressure_profile,
+            skip_intro=runtime_config.skip_intro,
             max_episode_steps=runtime_config.max_episode_steps,
             monitor_cls=Monitor,
             dummy_vec_env_cls=DummyVecEnv,
@@ -455,6 +462,7 @@ def main(args_list: list[str] | None = None) -> ExperimentLayout:
         f"- training_profile: `{runtime_config.training_profile}`",
         f"- reward_profile: `{runtime_config.reward_profile}`",
         f"- pressure_profile: `{runtime_config.pressure_profile}`",
+        f"- skip_intro: `{runtime_config.skip_intro}`",
         f"- control_mode: `{runtime_config.control_mode}`",
         f"- policy_action_space_nvec: `{config.get('policy_action_space_nvec')}`",
         f"- sim_action_space_nvec: `{config.get('sim_action_space_nvec')}`",

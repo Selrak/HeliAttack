@@ -159,6 +159,7 @@ def build_evaluation_report(
         "training_profile": training_profile,
         "reward_profile": experiment_config.get("reward_profile", "combat_default"),
         "pressure_profile": experiment_config.get("pressure_profile", "normal"),
+        "skip_intro": bool(experiment_config.get("skip_intro", True)),
         "control_mode": control_mode,
         "policy_action_space_nvec": experiment_config.get("policy_action_space_nvec"),
         "sim_action_space_nvec": experiment_config.get("sim_action_space_nvec", FULL_SIM_ACTION_NVEC),
@@ -342,6 +343,7 @@ def main(args_list: list[str] | None = None) -> None:
                 "control_mode": runtime_config.control_mode,
                 "reward_profile": runtime_config.reward_profile,
                 "pressure_profile": runtime_config.pressure_profile,
+                "skip_intro": runtime_config.skip_intro,
                 "model_choice": effective_model_choice,
                 "experiment": str(layout.path) if layout is not None else None,
                 "max_episode_steps": runtime_config.max_episode_steps,
@@ -524,6 +526,7 @@ def main(args_list: list[str] | None = None) -> None:
     config["training_profile"] = runtime_config.training_profile
     config["reward_profile"] = runtime_config.reward_profile
     config["pressure_profile"] = runtime_config.pressure_profile
+    config["skip_intro"] = runtime_config.skip_intro
     config["control_mode"] = runtime_config.control_mode
     config["max_episode_steps"] = runtime_config.max_episode_steps
     config.setdefault("policy_action_space_nvec", runtime_policy_action_space_nvec)
