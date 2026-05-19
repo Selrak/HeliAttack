@@ -268,6 +268,7 @@ def test_evaluate_model_infers_runtime_config_from_experiment(tmp_path, monkeypa
     assert report["control_mode"] == "movement_scripted_attack_direct"
     assert report["reward_profile"] == "defense_v1"
     assert report["pressure_profile"] == "enemy_fire_slow_4x"
+    assert report["damage_forensics"]["enabled"] is False
 
 
 def test_evaluate_model_cli_overrides_experiment_runtime_config(tmp_path, monkeypatch):

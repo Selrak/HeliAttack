@@ -162,6 +162,8 @@ def build_jobs(
     episodes: int,
     max_episode_steps: int,
     save_replays: bool,
+    damage_forensics: bool,
+    damage_forensics_window: int,
     threads_per_job: int,
     overrides: dict[str, str | None],
     timeout_seconds: int | None,
@@ -213,6 +215,8 @@ def build_jobs(
                         eval_id,
                     ]
                 )
+            if damage_forensics:
+                command.extend(["--damage-forensics", "on", "--damage-forensics-window", str(damage_forensics_window)])
             env_updates = {
                 "OMP_NUM_THREADS": str(threads_per_job),
                 "MKL_NUM_THREADS": str(threads_per_job),
@@ -252,6 +256,8 @@ def build_jobs(
                 "stderr_log_path": str(job_dir / "stderr.log"),
                 "command_path": str(job_dir / "command.txt"),
                 "env_updates": env_updates,
+                "damage_forensics_requested": bool(damage_forensics),
+                "damage_forensics_window": int(damage_forensics_window),
                 "exit_code": None,
                 "start_time": None,
                 "end_time": None,
@@ -362,6 +368,20 @@ def run_jobs(
                 job.metadata["exception"] = f"timeout after {timeout_seconds}s"
             if job.source_report_path.exists():
                 shutil.copy2(job.source_report_path, job.copied_report_path)
+                report = load_json_if_exists(job.source_report_path)
+                forensics = report.get("damage_forensics") or {}
+                json_path = Path(forensics["json_path"]) if forensics.get("json_path") else None
+                md_path = Path(forensics["markdown_path"]) if forensics.get("markdown_path") else None
+                if json_path is not None and json_path.exists():
+                    shutil.copy2(json_path, job.output_dir / "damage_forensics.json")
+                    job.metadata["damage_forensics_json_path"] = str(job.output_dir / "damage_forensics.json")
+                if md_path is not None and md_path.exists():
+                    shutil.copy2(md_path, job.output_dir / "damage_forensics.md")
+                    job.metadata["damage_forensics_markdown_path"] = str(job.output_dir / "damage_forensics.md")
+                job.metadata["damage_forensics_available"] = bool(
+                    (job.output_dir / "damage_forensics.json").exists()
+                    and (job.output_dir / "damage_forensics.md").exists()
+                )
             elif exit_code == 0:
                 job.metadata["exception"] = f"expected report not found: {job.source_report_path}"
                 job.metadata["exit_code"] = 2
@@ -437,6 +457,13 @@ SUMMARY_COLUMNS = [
     "left_edge_camping_rate",
     "right_edge_camping_rate",
     "input_motion_mismatch_rate",
+    "damage_forensics_available",
+    "high_bullet_density_hits",
+    "boost_related_hits",
+    "edge_or_blockage_hits",
+    "low_density_reading_failure_hits",
+    "candidate_missing_from_obs_hits",
+    "unclear_hits",
     "exit_code",
     "duration_seconds",
 ]
@@ -444,6 +471,9 @@ SUMMARY_COLUMNS = [
 
 def summary_row(job: EvalJob) -> dict[str, Any]:
     report = load_json_if_exists(job.copied_report_path)
+    forensics = load_json_if_exists(job.output_dir / "damage_forensics.json")
+    tag_counts = forensics.get("aggregate", {}).get("heuristic_tag_counts", {})
+    forensics_available = bool(forensics)
     return {
         "eval_id": job.eval_id,
         "label": job.metadata.get("label"),
@@ -474,6 +504,13 @@ def summary_row(job: EvalJob) -> dict[str, Any]:
         "left_edge_camping_rate": rate(report, "left_edge_camping_rate"),
         "right_edge_camping_rate": rate(report, "right_edge_camping_rate"),
         "input_motion_mismatch_rate": rate(report, "input_motion_mismatch_rate"),
+        "damage_forensics_available": forensics_available,
+        "high_bullet_density_hits": tag_counts.get("high_bullet_density", 0) if forensics_available else None,
+        "boost_related_hits": tag_counts.get("boost_related_or_cooldown", 0) + tag_counts.get("possible_missed_boost", 0) if forensics_available else None,
+        "edge_or_blockage_hits": tag_counts.get("edge_or_blockage", 0) if forensics_available else None,
+        "low_density_reading_failure_hits": tag_counts.get("low_density_reading_failure", 0) if forensics_available else None,
+        "candidate_missing_from_obs_hits": tag_counts.get("observation_candidate_missing", 0) if forensics_available else None,
+        "unclear_hits": tag_counts.get("unclear", 0) if forensics_available else None,
         "exit_code": job.metadata.get("exit_code"),
         "duration_seconds": job.metadata.get("duration_seconds"),
     }
@@ -510,14 +547,15 @@ def write_summaries(
         "",
         "Each row maps one model/pressure evaluation to an unambiguous `eval_id`.",
         "",
-        "| Eval ID | Label | Model | Pressure | Reward | Length | Damage | Death Rate | Timeout Rate | Report |",
-        "|---|---|---|---|---:|---:|---:|---:|---:|---|",
+        "| Eval ID | Label | Model | Pressure | Damage | Forensics | High Density | Boost Related | Edge | Low Density | Candidate Missing | Report |",
+        "|---|---|---|---|---:|---|---:|---:|---:|---:|---:|---|",
     ]
     for row in rows:
         report_path = f"jobs/{row['eval_id']}/eval_report.json"
         lines.append(
-            "| {eval_id} | {label} | {model_choice} | {pressure_profile} | {mean_reward} | "
-            "{mean_episode_length} | {mean_player_damage} | {death_rate} | {timeout_rate} | {report} |".format(
+            "| {eval_id} | {label} | {model_choice} | {pressure_profile} | {mean_player_damage} | "
+            "{damage_forensics_available} | {high_bullet_density_hits} | {boost_related_hits} | "
+            "{edge_or_blockage_hits} | {low_density_reading_failure_hits} | {candidate_missing_from_obs_hits} | {report} |".format(
                 **{key: "n/a" if value is None else value for key, value in row.items()},
                 report=report_path,
             )
@@ -546,6 +584,8 @@ def write_matrix_files(
         "max_parallel": args.max_parallel,
         "threads_per_job": args.threads_per_job,
         "save_replays": bool(args.save_replays),
+        "damage_forensics": bool(args.damage_forensics),
+        "damage_forensics_window": int(args.damage_forensics_window),
         "output_root": str(args.output_root),
         "dry_run": bool(args.dry_run),
         "overrides": {
@@ -588,6 +628,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--threads-per-job", type=parse_human_count, default=3)
     parser.add_argument("--save-replays", dest="save_replays", action="store_true", default=False)
     parser.add_argument("--no-save-replays", dest="save_replays", action="store_false")
+    parser.add_argument("--damage-forensics", action="store_true")
+    parser.add_argument("--damage-forensics-window", type=parse_human_count, default=60)
     parser.add_argument("--output-root", type=Path, default=Path("experiments") / "eval_matrices")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--reward-profile", default=None)
@@ -634,6 +676,8 @@ def main(args_list: list[str] | None = None) -> Path:
         episodes=args.episodes,
         max_episode_steps=args.max_episode_steps,
         save_replays=args.save_replays,
+        damage_forensics=args.damage_forensics,
+        damage_forensics_window=args.damage_forensics_window,
         threads_per_job=args.threads_per_job,
         overrides=overrides,
         timeout_seconds=args.timeout_seconds,

@@ -23,6 +23,7 @@ from scripts.experiment_utils import (
     resolve_experiment_layout_and_config,
     write_json_file,
 )
+from scripts.damage_forensics import DamageForensicsCollector, write_forensics_report
 from scripts.runtime_config import (
     add_runtime_config_args,
     explicit_runtime_overrides,
@@ -271,6 +272,8 @@ def main(args_list: list[str] | None = None) -> None:
     parser.add_argument("--replay-dir", type=Path, default=None)
     parser.add_argument("--report-name", type=str, default=None)
     parser.add_argument("--replay-prefix", type=str, default=None)
+    parser.add_argument("--damage-forensics", choices=["on", "off"], default="off")
+    parser.add_argument("--damage-forensics-window", type=int, default=60)
     add_runtime_config_args(parser)
     args = parser.parse_args(args_list)
 
@@ -328,6 +331,22 @@ def main(args_list: list[str] | None = None) -> None:
             if replay_path.exists():
                 raise FileExistsError(f"Refusing to overwrite existing replay: {replay_path}")
             planned_replay_paths.append(replay_path)
+
+    damage_forensics_enabled = args.damage_forensics == "on"
+    forensics_collector = None
+    if damage_forensics_enabled:
+        forensics_collector = DamageForensicsCollector(
+            window=args.damage_forensics_window,
+            runtime_context={
+                "training_profile": runtime_config.training_profile,
+                "control_mode": runtime_config.control_mode,
+                "reward_profile": runtime_config.reward_profile,
+                "pressure_profile": runtime_config.pressure_profile,
+                "model_choice": effective_model_choice,
+                "experiment": str(layout.path) if layout is not None else None,
+                "max_episode_steps": runtime_config.max_episode_steps,
+            },
+        )
 
     for episode in range(args.episodes):
         env = make_controlled_env(
@@ -399,6 +418,15 @@ def main(args_list: list[str] | None = None) -> None:
                 policy_actions[tuple(policy_action)] += 1
                 full_actions[tuple(full_action)] += 1
                 visible_enemy_bullet_counts.append(int(info.get("visible_enemy_bullets_current", 0)))
+                if forensics_collector is not None:
+                    forensics_collector.record_step(
+                        episode=episode,
+                        policy_action=policy_action,
+                        full_action=full_action,
+                        info=info,
+                        terminated=terminated,
+                        truncated=truncated,
+                    )
         finally:
             if writer is not None:
                 writer.close()
@@ -512,6 +540,21 @@ def main(args_list: list[str] | None = None) -> None:
         replay_paths=replay_paths,
         experiment_config=config,
     )
+    if forensics_collector is not None:
+        stem = report_path.stem
+        forensics_json_path = report_path.parent / f"damage_forensics_{stem}.json"
+        forensics_md_path = report_path.parent / f"damage_forensics_{stem}.md"
+        forensics_report = forensics_collector.build_report(episodes=args.episodes)
+        write_forensics_report(forensics_json_path, forensics_md_path, forensics_report)
+        report["damage_forensics"] = {
+            "enabled": True,
+            "window": int(args.damage_forensics_window),
+            "json_path": str(forensics_json_path),
+            "markdown_path": str(forensics_md_path),
+            "aggregate": forensics_report["aggregate"],
+        }
+    else:
+        report["damage_forensics"] = {"enabled": False}
     write_json_file(report_path, report)
     print(f"Wrote {report_path}")
 

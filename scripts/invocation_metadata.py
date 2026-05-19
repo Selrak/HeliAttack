@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import platform
 import shlex
 import subprocess
 import sys
@@ -58,7 +57,7 @@ def capture_invocation_metadata(
         "cwd": str(Path(cwd)),
         "python_executable": sys.executable,
         "python_version": sys.version,
-        "platform": platform.platform(),
+        "platform": f"{sys.platform}/{os.name}",
         "timestamp": datetime.now().isoformat(timespec="seconds"),
         "environment": selected_env,
     }

@@ -264,6 +264,8 @@ def test_save_replays_is_opt_in(tmp_path):
         episodes=1,
         max_episode_steps=200,
         save_replays=False,
+        damage_forensics=False,
+        damage_forensics_window=60,
         threads_per_job=1,
         overrides={"training_profile": None, "control_mode": None, "reward_profile": None},
         timeout_seconds=None,
@@ -276,6 +278,8 @@ def test_save_replays_is_opt_in(tmp_path):
         episodes=1,
         max_episode_steps=200,
         save_replays=True,
+        damage_forensics=False,
+        damage_forensics_window=60,
         threads_per_job=1,
         overrides={"training_profile": None, "control_mode": None, "reward_profile": None},
         timeout_seconds=None,
@@ -283,6 +287,32 @@ def test_save_replays_is_opt_in(tmp_path):
 
     assert "--save-replays" not in default_jobs[0].command
     assert "--save-replays" in opt_in_jobs[0].command
+
+
+def test_damage_forensics_flag_is_forwarded_to_eval_jobs(tmp_path):
+    exp = make_experiment(tmp_path / "experiments", "m0")
+    matrix_id, matrix_dir = evaluate_matrix.unique_matrix_dir(tmp_path / "matrices", "forensics")
+    matrix_dir.mkdir(parents=True)
+    entry = evaluate_matrix.MatrixEntry("M0", exp, "latest")
+
+    jobs = evaluate_matrix.build_jobs(
+        entries=[entry],
+        pressure_profiles=["normal"],
+        matrix_id=matrix_id,
+        matrix_dir=matrix_dir,
+        episodes=1,
+        max_episode_steps=200,
+        save_replays=False,
+        damage_forensics=True,
+        damage_forensics_window=7,
+        threads_per_job=1,
+        overrides={"training_profile": None, "control_mode": None, "reward_profile": None},
+        timeout_seconds=None,
+    )
+
+    assert "--damage-forensics" in jobs[0].command
+    assert jobs[0].command[jobs[0].command.index("--damage-forensics") + 1] == "on"
+    assert jobs[0].command[jobs[0].command.index("--damage-forensics-window") + 1] == "7"
 
 
 def test_fail_fast_skips_pending_jobs_without_hanging(tmp_path, monkeypatch):
@@ -333,3 +363,86 @@ def test_fail_fast_skips_pending_jobs_without_hanging(tmp_path, monkeypatch):
     assert jobs[0]["exit_code"] == 1
     assert jobs[1]["skipped"] is True
     assert jobs[1]["skip_reason"] == "fail_fast"
+
+
+def test_matrix_copies_damage_forensics_outputs_and_bundles_them(tmp_path, monkeypatch):
+    exp = make_experiment(tmp_path / "experiments", "m0")
+    monkeypatch.chdir(tmp_path)
+
+    class ForensicsProcess:
+        def __init__(self, command, stdout, stderr, cwd, env, text):
+            self.returncode = 0
+            experiment = Path(command[command.index("--experiment") + 1])
+            report_name = command[command.index("--report-name") + 1]
+            report_path = experiment / "reports" / report_name
+            forensics_json = experiment / "reports" / f"damage_forensics_{Path(report_name).stem}.json"
+            forensics_md = experiment / "reports" / f"damage_forensics_{Path(report_name).stem}.md"
+            forensics_json.write_text(
+                json.dumps(
+                    {
+                        "aggregate": {
+                            "heuristic_tag_counts": {
+                                "high_bullet_density": 1,
+                                "possible_missed_boost": 2,
+                                "boost_related_or_cooldown": 1,
+                            }
+                        },
+                        "events": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            forensics_md.write_text("# Damage Forensics\n", encoding="utf-8")
+            report = fake_eval_report(pressure_profile="normal")
+            report["damage_forensics"] = {
+                "enabled": True,
+                "json_path": str(forensics_json),
+                "markdown_path": str(forensics_md),
+            }
+            report_path.write_text(json.dumps(report), encoding="utf-8")
+
+        def poll(self):
+            return self.returncode
+
+        def wait(self):
+            return self.returncode
+
+        def kill(self):
+            self.returncode = -9
+
+    monkeypatch.setattr(evaluate_matrix.subprocess, "Popen", ForensicsProcess)
+
+    matrix_dir = evaluate_matrix.main(
+        [
+            "--matrix-name",
+            "forensics_copy",
+            "--entry",
+            f"label=M0;experiment={exp};model=latest",
+            "--pressure-profiles",
+            "normal",
+            "--episodes",
+            "1",
+            "--max-episode-steps",
+            "200",
+            "--max-parallel",
+            "1",
+            "--threads-per-job",
+            "1",
+            "--output-root",
+            str(tmp_path / "matrices"),
+            "--damage-forensics",
+        ]
+    )
+
+    job_dir = next((matrix_dir / "jobs").iterdir())
+    assert (job_dir / "damage_forensics.json").exists()
+    assert (job_dir / "damage_forensics.md").exists()
+    summary = json.loads((matrix_dir / "matrix_summary.json").read_text(encoding="utf-8"))
+    assert summary["rows"][0]["damage_forensics_available"] is True
+    assert summary["rows"][0]["high_bullet_density_hits"] == 1
+    assert summary["rows"][0]["boost_related_hits"] == 3
+    bundle = next(matrix_dir.glob("*_bundle.zip"))
+    with zipfile.ZipFile(bundle) as zf:
+        names = set(zf.namelist())
+    assert f"jobs/{job_dir.name}/damage_forensics.json" in names
+    assert f"jobs/{job_dir.name}/damage_forensics.md" in names
