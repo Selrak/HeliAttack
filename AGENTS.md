@@ -72,6 +72,7 @@
   - copies of every impacted `docs/ai` file, in its final state;
   - the complete current `git diff` output as a text file;
   - a concise final Codex report text file matching the final console response for the task.
+- When tests produce natural verification artifacts for the task, include them too. This especially covers new-task artifacts such as replay recordings, model files, experiment outputs, eval reports, matrix reports, and similar outputs that help verify the implementation.
 - The bundled final report should omit working-tree or Git-management commentary unless it is directly relevant to implementation, validation, a blocker, or a risk.
 - If an impacted file is very large, binary, generated, ignored, or ambiguous to include, ask for clarification instead of guessing.
 

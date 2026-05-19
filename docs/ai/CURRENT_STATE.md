@@ -55,6 +55,7 @@ Last updated: 2026-05-19 Europe/Paris
 ## Current Architecture
 - `ha2_env.py` contains the main runtime architecture: environment state, player physics, default MachineGun/bullets, one default Heli enemy target, collision checks against `const.FULL_MAP_DATA`, rendering, and state/hash debug hooks.
 - `ha2_replay.py` provides deterministic JSONL replay writing/loading/verification.
+- Replay headers now record simulator metadata (`simulator_id`, `simulator_version`, `simulation_semantics.collision_model`); replay verification/playback default to the recorded simulator semantics and can be overridden with `recorded/current/legacy`.
 - `scripts/` contains manual play, replay, screenshot, and SB3 pipeline entry points plus `scripts/experiment_utils.py` for experiment directory/path resolution.
 - `tests/` contains pytest smoke tests.
 - `ha2_constants.py` is generated static data for map and core movement constants.
@@ -83,6 +84,7 @@ Last updated: 2026-05-19 Europe/Paris
 - Player bitmap registration, nested walk cadence, AS casing quirks, and edge `hitCheck` behavior remain uncertain; see `docs/parity_notes.md`.
 - The generated constants file is large and should not be edited manually without a clear reason.
 - Future sessions must check `git status` before editing and avoid reverting user work.
+- Handoff bundles should include natural verification artifacts from the task, such as replay recordings, models, experiment outputs, and eval reports when those are produced by tests or smoke runs.
 
 ## Manual Control Update
 - `scripts.play_human` supports `F12` screenshots saved as incrementing PNG files under `screenshots/` by default.
@@ -98,6 +100,9 @@ Last updated: 2026-05-19 Europe/Paris
 - `scripts.evaluate_model --damage-forensics on` writes separate JSON/Markdown damage-forensics reports with pre-impact windows and heuristic tags; `scripts.evaluate_matrix --damage-forensics` forwards this and bundles copied per-job reports.
 - `ha2_env_legacy.py` is a frozen copy of the current rectangle-collision simulator for future A/B parity checks.
 - `docs/ai/HA2_COLLISION_PARITY_AUDIT.md` documents AS/FFDEC collision evidence. Current projectile collision in `ha2_env.py` is rectangle-based and may diverge from Flash `hitTest(..., ..., true)` against nested hit shapes.
+- `ha2_env.py` now supports opt-in `collision_model="ffdec_polygon"` for projectile hits against FFDEC-derived Heli, standing-player, and duck-player hit polygons. The default remains `collision_model="rect"`.
+- `ha2_env_legacy.py` is used as the replay-compatible legacy simulator for old pre-split `env_version <= 0.6` replays without explicit simulator metadata.
+- `scripts.compare_collision_models` reports deterministic synthetic probe differences between rectangle and FFDEC polygon collision.
 - Damage forensics is diagnostic only: terrain blockage, world-right-edge distance, exact boost cooldown, and exact grounded-state-change fields are marked unavailable/null until a future simulator-diagnostics task.
 - New experiment and matrix outputs record reproducibility metadata: `argv.json`, `command.txt`, `invocation_metadata.json`, and `resolved_config.json`.
 - `scripts.run_experiment` also records child command metadata such as `train_command.txt` and `eval_latest_command.txt`.

@@ -1499,3 +1499,33 @@ Add a cross-platform `scripts.evaluate_matrix` runner for model/pressure evaluat
 - Validation passed: py_compile for `ha2_env.py ha2_env_legacy.py ha2_replay.py`; `tests/test_legacy_env.py` (`1 passed`); full pytest (`120 passed, 3 warnings`); `scripts.play_human --help`.
 - Remaining risk: exact Flash `hitTest` transform semantics and Heli rotation inheritance still need targeted validation before changing simulator collision.
 - Suggested next task: add current-behavior collision tests, then prototype FFDEC polygon point-hit collision behind a compatibility switch and compare against `ha2_env_legacy.py`.
+
+## 2026-05-19 Europe/Paris - FFDEC Polygon Collision Prototype
+
+- Pre-existing status: `docs/ai/NEXT_CODEX_TASK.md` was modified; prior handoff bundles were untracked under `docs/ai/`.
+- Task: add opt-in projectile collision model `collision_model="ffdec_polygon"` while preserving `rect` as default.
+- Files inspected: `ha2_env.py`, `ha2_env_legacy.py`, `tests/test_legacy_env.py`, `docs/ai/HA2_COLLISION_PARITY_AUDIT.md`, `docs/parity_notes.md`, FFDEC SVG hit-shape exports, and AS `hitTest` call sites.
+- Files changed: `ha2_collision.py`, `ha2_env.py`, `tests/test_collision_model.py`, `scripts/compare_collision_models.py`, `pytest.ini`, `docs/parity_notes.md`, `docs/ai/CURRENT_STATE.md`, `docs/ai/VALIDATION.md`, `docs/ai/CODEX_SESSION_LOG.md`.
+- FFDEC shapes used: Heli `DefineSprite_109`, standing player `DefineSprite_119`, duck player `DefineSprite_123`.
+- Transform assumptions: Heli hit polygon uses child offset `(-104.5,-52.55)` and current Heli rotation around the simulator/render registration point; player non-duck states use standing `gfx.hit` offset `(12.65,1.2)`, duck uses `(12.85,7.35)`.
+- Behavior differences found: Heli top-left rect probe hits only in `rect`; standing and duck player left-edge probes hit only in `ffdec_polygon`; center probes agree.
+- Validation passed: py_compile for `ha2_env.py ha2_env_legacy.py ha2_replay.py ha2_collision.py scripts/compare_collision_models.py`; targeted pytest (`8 passed`); `scripts.compare_collision_models`; full pytest (`127 passed, 3 warnings`).
+- Workaround: `pytest.ini` now restricts discovery to `tests` so informative handoff bundle directories under `docs/ai` are not collected as duplicate tests.
+- Remaining risks: exact Flash `hitTest` transform semantics and non-duck animation-frame hit-shape mapping still need Flash validation before making polygon collision default.
+- Suggested next task: run targeted replay probes and manual debug-overlay checks with `collision_model="ffdec_polygon"` before considering a default change.
+
+## 2026-05-19 Europe/Paris - Handoff Artifact Rule
+
+- Updated `AGENTS.md` to require natural verification artifacts in end-of-task bundles when tests or smoke runs produce them, including replays, models, experiment outputs, and eval reports.
+- Updated `docs/ai/CURRENT_STATE.md` to note the same bundle-content rule.
+- Validation: documentation-only change; no runtime validation run.
+
+## 2026-05-19 Europe/Paris - Replay Simulator Metadata
+
+- Pre-existing status before this task: uncommitted collision-polygon prototype files, handoff bundle files, and docs updates were already present.
+- Added replay metadata fields: `simulator_id`, `simulator_version`, and `simulation_semantics.collision_model`.
+- Added replay simulator resolution for `recorded/current/legacy`; `verify_replay_file` and `scripts.play_replay` default to recorded semantics.
+- Old replay headers without simulator metadata infer `ha2_env_legacy` + `rect` only for known pre-split `env_version` values through `0.6`; unclear headers fail clearly.
+- Files changed: `ha2_env.py`, `ha2_replay.py`, `scripts/play_replay.py`, `scripts/verify_replay.py`, `tests/test_replay_metadata.py`, `docs/ai/CURRENT_STATE.md`, `docs/ai/VALIDATION.md`, `docs/ai/CODEX_SESSION_LOG.md`.
+- Validation passed: py_compile for replay modules/scripts; `tests/test_replay_metadata.py` (`7 passed`); full pytest (`134 passed, 3 warnings`); `scripts.play_replay --help`.
+- Remaining risk: old third-party/manual replay files with missing or ambiguous `env_version` are intentionally rejected until manually classified.

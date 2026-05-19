@@ -43,6 +43,13 @@ Inspected source: `heliattack2_scripts/ha2_core_logic/frame_19_DoAction_2.as`.
 - FFDEC SVG exports now confirm non-rectangular hidden hit shapes for Heli `DefineSprite_109`, standing player `DefineSprite_119`, and duck player `DefineSprite_123`.
 - Current Python projectile collision remains rectangle-based; see `docs/ai/HA2_COLLISION_PARITY_AUDIT.md` before changing simulator behavior.
 
+## AS Audit - 2026-05-19 FFDEC Polygon Collision Prototype
+
+- `collision_model="rect"` remains the simulator default.
+- `collision_model="ffdec_polygon"` is an opt-in prototype for projectile hit tests using embedded FFDEC polygons from `DefineSprite_109`, `DefineSprite_119`, and `DefineSprite_123`.
+- Heli polygon placement uses the exported `hit` child offset `(-104.5,-52.55)` and rotates around the current Heli registration point, matching the current renderer assumption. Exact Flash `hitTest` transform parity still needs targeted Flash validation.
+- Player polygon placement uses the standing `gfx.hit` offset `(12.65,1.2)` for non-duck states and the duck offset `(12.85,7.35)` for duck. Non-duck jump/walk/chute states reuse the standing hit shape for now.
+
 ## Believed To Match Current AS Translation
 - Player spawn uses `map[y][x][0] == 32`, sets `x = tile * 50 + 25`, and starts at `y = -50`.
 - Runtime map setup now clears `32` spawn markers to `0`, matching AS `assignents()`.

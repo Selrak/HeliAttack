@@ -3,8 +3,11 @@
 Run from repo root after installing `requirements.txt`. Use the project venv (`.venv`) if the system Python does not have pytest/SB3:
 
 ```powershell
-python -m py_compile ha2_env.py ha2_replay.py extract_ha2_data.py ha2_constants.py
+python -m py_compile ha2_env.py ha2_env_legacy.py ha2_collision.py ha2_replay.py extract_ha2_data.py ha2_constants.py
 python -m py_compile scripts/runtime_config.py scripts/experiment_utils.py scripts/invocation_metadata.py scripts/train_parkour.py scripts/evaluate_model.py scripts/evaluate_matrix.py scripts/watch_model.py scripts/play_human.py scripts/play_replay.py scripts/run_experiment.py scripts/run_experiment_pair.py scripts/benchmark_vec_envs.py
+python -m py_compile scripts/compare_collision_models.py
+python -m pytest tests/test_collision_model.py tests/test_legacy_env.py
+python -m scripts.compare_collision_models
 python -m pytest
 python -m scripts.record_random_replay --steps 300 --out replays/smoke.jsonl
 python -m scripts.verify_replay replays/smoke.jsonl
@@ -76,6 +79,8 @@ python -m scripts.play_replay reports/parity_traces/fire_right_60.jsonl
 python -m scripts.play_replay reports/parity_traces/fire_at_heli_180.jsonl
 python -m scripts.play_replay reports/parity_traces/heli_shoots_hero_240.jsonl
 python -m scripts.play_replay reports/parity_traces/kill_heli_respawn_600.jsonl
+python -m scripts.play_replay replays/smoke.jsonl --replay-env recorded
+python -m scripts.verify_replay replays/smoke.jsonl --replay-env recorded
 ```
 
 Optional GUI/model watch after SB3 smoke creates a model:

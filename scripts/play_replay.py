@@ -7,8 +7,13 @@ from pathlib import Path
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 import pygame
 
-from ha2_env import HeliAttack2Env
-from ha2_replay import load_replay
+from ha2_replay import (
+    REPLAY_ENV_CHOICES,
+    load_replay,
+    make_replay_env,
+    replay_env_override_warning,
+    resolve_replay_simulator_config,
+)
 
 
 def main() -> None:
@@ -17,16 +22,19 @@ def main() -> None:
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--start-paused", action="store_true")
     parser.add_argument("--fast-fps-multiplier", type=int, default=4)
+    parser.add_argument("--replay-env", choices=REPLAY_ENV_CHOICES, default="recorded")
     args = parser.parse_args()
 
     header, steps = load_replay(args.replay)
-    env = HeliAttack2Env(
+    replay_config = resolve_replay_simulator_config(header, replay_env=args.replay_env)
+    warning = replay_env_override_warning(replay_config)
+    if warning:
+        print(f"WARNING: {warning}")
+    env = make_replay_env(
+        header,
         render_mode="human",
         auto_render=False,
-        training_profile=header.get("training_profile", "legacy"),
-        reward_profile=header.get("reward_profile", "combat_default"),
-        pressure_profile=header.get("pressure_profile", "normal"),
-        max_episode_steps=header.get("max_episode_steps"),
+        replay_env=args.replay_env,
     )
     env.reset(seed=int(header["seed"]))
     clock = pygame.time.Clock()
@@ -42,6 +50,7 @@ def main() -> None:
         debug_collision=False,
         debug_lines=[
             f"replay={args.replay.name} step=0/{len(steps)} paused={paused}",
+            f"sim={replay_config.simulator_id} collision={replay_config.simulation_semantics['collision_model']}",
             f"pressure={header.get('pressure_profile', 'normal')}",
         ],
     )
@@ -73,6 +82,7 @@ def main() -> None:
 
             extra = [
                 f"replay={args.replay.name} step={index}/{len(steps)} paused={paused} fast={fast_forward}",
+                f"sim={replay_config.simulator_id} collision={replay_config.simulation_semantics['collision_model']}",
                 f"pressure={header.get('pressure_profile', 'normal')}",
                 "controls: F1 debug F fast-forward P/Space pause N step Esc quit",
             ]

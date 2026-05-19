@@ -14,13 +14,14 @@ import numpy as np
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 import pygame
 
+import ha2_collision as collision
 import ha2_constants as const
 
 
 REPO_ROOT = Path(__file__).resolve().parent
 HA2_ASSET_DIR = REPO_ROOT / "assets_ffdec"
 ENV_NAME = "HeliAttack2Env"
-ENV_VERSION = "0.6"
+ENV_VERSION = "0.7"
 
 AIM_BINS = 32
 DEFAULT_AIM_BIN = 0
@@ -182,6 +183,7 @@ class HeliAttack2Env(gym.Env):
         training_profile: str = "legacy",
         reward_profile: str = "combat_default",
         pressure_profile: str = PRESSURE_PROFILE_NORMAL,
+        collision_model: str = collision.COLLISION_MODEL_RECT,
         max_episode_steps: int | None = None,
     ):
         super().__init__()
@@ -205,12 +207,18 @@ class HeliAttack2Env(gym.Env):
         self.enemy_fire_interval_multiplier = PRESSURE_PROFILE_FIRE_INTERVAL_MULTIPLIERS[pressure_profile]
         if max_episode_steps is not None and int(max_episode_steps) <= 0:
             raise ValueError("max_episode_steps must be positive or None")
+        if collision_model not in collision.COLLISION_MODELS:
+            raise ValueError(
+                f"Unknown collision_model {collision_model!r}; "
+                f"expected one of {sorted(collision.COLLISION_MODELS)}"
+            )
         self.render_mode = render_mode
         self.assets_dir = Path(assets_dir) if assets_dir is not None else HA2_ASSET_DIR
         self.auto_render = auto_render
         self.spawn_default_heli = bool(spawn_default_heli)
         self.respawn_helis = bool(respawn_helis)
         self.training_profile = training_profile
+        self.collision_model = collision_model
         self.max_episode_steps = None if max_episode_steps is None else int(max_episode_steps)
 
         # ACTION SPACE: [Move(left/idle/right), Jump, Duck, Boost, AimBin, Fire]
@@ -1061,10 +1069,20 @@ class HeliAttack2Env(gym.Env):
         top = float(enemy["y"]) + HELI_HIT_OFFSET_Y
         return left, top, left + HELI_HIT_WIDTH, top + HELI_HIT_HEIGHT
 
+    def _enemy_hit_polygon(self, enemy: dict[str, Any]) -> list[collision.Point]:
+        return collision.heli_hit_polygon_world(
+            float(enemy["x"]),
+            float(enemy["y"]),
+            rotation=float(enemy.get("rotation", 0.0)),
+        )
+
     def _player_hit_rect(self) -> tuple[float, float, float, float]:
         left = self._x + self.width / 2 - self.playerwidth / 2
         top = self._y + self.height / 2 - self.playerheight / 2
         return left, top, left + self.playerwidth, top + self.playerheight
+
+    def _player_hit_polygon(self) -> list[collision.Point]:
+        return collision.player_hit_polygon_world(self._x, self._y, duck=bool(self.duck))
 
     def _bullet_hit_enemy(self, bullet: dict[str, Any]) -> int | None:
         bx = float(bullet["x"])
@@ -1072,8 +1090,12 @@ class HeliAttack2Env(gym.Env):
         for enemy in self.enemies:
             if int(enemy["health"]) <= 0:
                 continue
-            left, top, right, bottom = self._enemy_hit_rect(enemy)
-            if left <= bx <= right and top <= by <= bottom:
+            if self.collision_model == collision.COLLISION_MODEL_FFDEC_POLYGON:
+                hit = collision.point_in_polygon((bx, by), self._enemy_hit_polygon(enemy))
+            else:
+                left, top, right, bottom = self._enemy_hit_rect(enemy)
+                hit = left <= bx <= right and top <= by <= bottom
+            if hit:
                 damage = int(bullet["damage"])
                 enemy["health"] = int(enemy["health"]) - damage
                 self.score += damage
@@ -1110,6 +1132,8 @@ class HeliAttack2Env(gym.Env):
     def _enemy_bullet_hit_player(self, bullet: dict[str, Any]) -> bool:
         bx = float(bullet["x"])
         by = float(bullet["y"])
+        if self.collision_model == collision.COLLISION_MODEL_FFDEC_POLYGON:
+            return collision.point_in_polygon((bx, by), self._player_hit_polygon())
         left, top, right, bottom = self._player_hit_rect()
         return left <= bx <= right and top <= by <= bottom
 
@@ -2055,10 +2079,24 @@ class HeliAttack2Env(gym.Env):
         )
         pygame.draw.rect(canvas, (30, 144, 255), logical, 1)
         pygame.draw.rect(canvas, (255, 64, 64), hitbox, 1)
+        if self.collision_model == collision.COLLISION_MODEL_FFDEC_POLYGON:
+            pygame.draw.polygon(
+                canvas,
+                (255, 96, 96),
+                [(round(x + cam_x), round(y + cam_y)) for x, y in self._player_hit_polygon()],
+                1,
+            )
         for enemy in self.enemies:
             left, top, right, bottom = self._enemy_hit_rect(enemy)
             rect = pygame.Rect(left + cam_x, top + cam_y, right - left, bottom - top)
             pygame.draw.rect(canvas, (255, 196, 0), rect, 1)
+            if self.collision_model == collision.COLLISION_MODEL_FFDEC_POLYGON:
+                pygame.draw.polygon(
+                    canvas,
+                    (255, 224, 64),
+                    [(round(x + cam_x), round(y + cam_y)) for x, y in self._enemy_hit_polygon(enemy)],
+                    1,
+                )
             pivot_x, pivot_y = self._heli_gun_pivot_world_pos(enemy)
             barrel_x, barrel_y = self._heli_gun_barrel_world_pos(enemy)
             pygame.draw.circle(canvas, (0, 180, 255), (round(pivot_x + cam_x), round(pivot_y + cam_y)), 3, 1)
@@ -2398,6 +2436,7 @@ class HeliAttack2Env(gym.Env):
             "tick": self.tick,
             "state_hash": self.state_hash(),
             "pressure_profile": self.pressure_profile,
+            "collision_model": self.collision_model,
             "enemy_fire_period": int(self._heli_shoot_period()),
             "enemy_fire_interval_multiplier": int(self.enemy_fire_interval_multiplier),
             "state": self.get_state(),
