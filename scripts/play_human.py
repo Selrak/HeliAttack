@@ -14,6 +14,7 @@ from ha2_env import (
     HeliAttack2Env,
     make_controlled_env,
 )
+from ha2_high_score import update_high_score
 from ha2_replay import JsonlReplayWriter
 from scripts.runtime_config import add_runtime_config_args, resolve_runtime_config, runtime_env_kwargs
 
@@ -97,6 +98,7 @@ def main() -> None:
     frames = []
     screenshot_index = 1
     running = True
+    session_max_score = int(base_env.score)
 
     print(
         "Controls: A/D or Q/D or Left/Right move, W/Z/Up jump, S/Down duck, Shift hyperjump, "
@@ -136,6 +138,8 @@ def main() -> None:
                         screenshot_index += 1
                         print(f"Saved screenshot: {path}")
                     elif event.key == pygame.K_r:
+                        session_max_score = max(session_max_score, int(base_env.score))
+                        update_high_score(session_max_score)
                         obs, _info = env.reset(seed=args.seed)
                         if writer is not None:
                             print("Replay recording stopped because reset events are not in schema v1.")
@@ -146,9 +150,11 @@ def main() -> None:
             should_step = not paused or single_step
             if should_step:
                 obs, reward, terminated, truncated, info = env.step(action)
+                session_max_score = max(session_max_score, int(base_env.score))
                 if writer is not None:
                     writer.append_step(env, action, obs, reward, terminated, truncated, info)
                 if terminated or truncated:
+                    update_high_score(session_max_score)
                     obs, _info = env.reset(seed=args.seed)
                 single_step = False
 
@@ -172,6 +178,7 @@ def main() -> None:
 
             clock.tick(fps)
     finally:
+        update_high_score(session_max_score)
         if writer is not None:
             writer.close()
         env.close()

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 import numpy as np
 import pygame
+import pytest
 
-from ha2_env import HeliAttack2Env
+from ha2_env import HA2_HUD_FONT_PATH, HeliAttack2Env
 from scripts.play_human import action_from_keys
 
 
@@ -89,6 +91,73 @@ def test_player_health_hud_uses_health_value():
         full_health_frame[health_region],
         half_health_frame[health_region],
     )
+    env.close()
+
+
+@pytest.mark.parametrize(
+    "training_profile",
+    ["legacy", "combat_v1", "combat_bullets_v1"],
+)
+def test_health_depletion_terminates_universally(training_profile):
+    env = HeliAttack2Env(
+        render_mode=None,
+        training_profile=training_profile,
+        spawn_default_heli=False,
+        skip_intro=True,
+    )
+    env.reset(seed=0)
+    env.health = -5
+
+    _obs, _reward, terminated, truncated, info = env.step(IDLE_ACTION)
+
+    assert terminated is True
+    assert truncated is False
+    assert env.health == 0
+    assert info["player_health"] == 0
+    assert info["termination_reason"] == "player_death"
+    env.close()
+
+
+@pytest.mark.parametrize(
+    ("side", "start_x", "action"),
+    [
+        ("left", 0.0, [0, 0, 0, 0, 0, 0]),
+        ("right", None, [2, 0, 0, 0, 0, 0]),
+    ],
+)
+def test_lateral_world_bounds_are_collision_bounds_not_fall_death(
+    side,
+    start_x,
+    action,
+):
+    env = HeliAttack2Env(
+        render_mode=None,
+        training_profile="combat_v1",
+        spawn_default_heli=False,
+        skip_intro=True,
+    )
+    env.reset(seed=0)
+    if start_x is None:
+        env._x = env.map_pixel_width - env.width
+    else:
+        env._x = start_x
+    env.xspeed = -6 if action[0] == 0 else 6
+
+    info = {}
+    terminated = truncated = False
+    for _ in range(12):
+        _obs, _reward, terminated, truncated, info = env.step(action)
+        assert terminated is False
+        assert truncated is False
+        assert info["termination_reason"] != "fall"
+
+    left, _top, right, _bottom = env._player_hit_rect()
+    if side == "left":
+        assert left >= -1.0
+        assert info["contact"]["wall"] == "left"
+    else:
+        assert right <= env.map_pixel_width
+        assert info["contact"]["wall"] == "right"
     env.close()
 
 
@@ -307,6 +376,72 @@ def test_default_intro_spawns_heli_after_as_start_lifecycle():
     assert env.default_heli_spawned is True
     assert env.pending_default_heli is False
     assert len(env.enemies) == 1
+    env.close()
+
+
+def test_hud_debug_info_and_exact_font_asset(monkeypatch):
+    monkeypatch.setattr("ha2_env.load_high_score", lambda: 7)
+    env = HeliAttack2Env(render_mode="rgb_array", auto_render=False)
+    env.reset(seed=0)
+    env.score = 12.9
+    env.rthelis = 3
+    env.hyperjump = 75
+    env.render()
+
+    info = env.get_debug_info()
+    assert HA2_HUD_FONT_PATH.exists()
+    assert env.images["hud_health"] is not None
+    assert env.images["hud_health_base"] is not None
+    assert env.images["hud_health_fill"] is not None
+    assert env.images["hud_hyperjump_full"] is not None
+    assert env.images["hud_hyperjump_base"] is not None
+    assert env.images["hud_hyperjump_fill"] is not None
+    assert env.images["hud_reload_full"] is not None
+    assert env.images["hud_reload_base"] is not None
+    assert env.images["hud_reload_fill"] is not None
+    assert env.images["hud_reload_ready"] is not None
+    assert env.images["hud_weapon_icon"] is not None
+    assert info["elapsed_seconds"] == 0
+    assert info["heli_count"] == 3
+    assert info["display_score"] == 1200
+    assert info["raw_high_score"] == 7
+    assert info["display_high_score"] == 700
+    assert info["hyperjump_fraction"] == 0.5
+    assert info["reload_ready"] is True
+    assert info["reload_fraction"] == 1.0
+    assert info["hud_font_exact"] is True
+    env.close()
+
+
+def test_viewer_scripts_do_not_duplicate_normal_hud_drawing():
+    forbidden = [
+        "Health:",
+        "HyperJump:",
+        "Reload:",
+        "Infinite x ",
+        "hud_health",
+        "hud_hyperjump",
+        "hud_reload",
+        "hud_weapon_icon",
+    ]
+    for script in [
+        Path("scripts/play_human.py"),
+        Path("scripts/watch_model.py"),
+        Path("scripts/play_replay.py"),
+    ]:
+        text = script.read_text(encoding="utf-8")
+        for needle in forbidden:
+            assert needle not in text
+
+
+def test_hud_font_fallback_does_not_crash(monkeypatch, tmp_path):
+    monkeypatch.setattr("ha2_env.HA2_HUD_FONT_PATH", tmp_path / "missing.ttf")
+    env = HeliAttack2Env(render_mode="rgb_array", auto_render=False)
+    env.reset(seed=0)
+    frame = env.render()
+    info = env.get_debug_info()
+    assert isinstance(frame, np.ndarray)
+    assert info["hud_font_exact"] is False
     env.close()
 
 

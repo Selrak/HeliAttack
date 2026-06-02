@@ -98,6 +98,7 @@ def test_evaluation_report_defensive_metrics_handle_no_damage(tmp_path):
             "length": 20,
             "termination_reason": "time_limit",
             "falls": 0,
+            "out_of_bounds_safety": 0,
             "deaths": 0,
             "heli_kills": 0,
             "heli_hits": 0,
@@ -242,3 +243,22 @@ def test_run_experiment_forwards_reward_profile_to_final_eval(tmp_path, monkeypa
     )
 
     assert len(eval_calls) == 1
+
+
+def test_evaluation_stats_update_high_score(monkeypatch):
+    from scripts import evaluate_model
+
+    calls = []
+
+    def fake_update(raw_score):
+        calls.append(raw_score)
+        return int(raw_score)
+
+    monkeypatch.setattr(evaluate_model, "update_high_score", fake_update)
+
+    result = evaluate_model.update_high_score_from_eval_stats(
+        [{"max_score": 2}, {"max_score": 9}, {"max_score": 4}]
+    )
+
+    assert result == 9
+    assert calls == [9]

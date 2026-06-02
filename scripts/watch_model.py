@@ -73,6 +73,7 @@ def main(args_list: list[str] | None = None) -> None:
     import pygame
 
     from ha2_env import get_full_action, get_policy_action, make_controlled_env
+    from ha2_high_score import update_high_score
     from ha2_replay import JsonlReplayWriter
 
     env = make_controlled_env(
@@ -113,6 +114,8 @@ def main(args_list: list[str] | None = None) -> None:
     frames = []
     fast_forward = False
     running = True
+    episode_max_score = int(base_env.score)
+    session_max_score = int(base_env.score)
 
     base_env.render(
         debug_overlay=True,
@@ -138,6 +141,8 @@ def main(args_list: list[str] | None = None) -> None:
             action, _state = model.predict(obs, deterministic=not args.stochastic)
             action_list = [int(v) for v in action]
             obs, reward, terminated, truncated, info = env.step(action_list)
+            episode_max_score = max(episode_max_score, int(base_env.score))
+            session_max_score = max(session_max_score, episode_max_score)
             if writer is not None:
                 policy_action = get_policy_action(env, action_list)
                 full_action = get_full_action(env, action_list)
@@ -171,10 +176,13 @@ def main(args_list: list[str] | None = None) -> None:
                 frames.append(np.transpose(frame3d, (1, 0, 2)))
 
             if terminated or truncated:
+                update_high_score(episode_max_score)
                 obs, _info = env.reset(seed=args.seed)
+                episode_max_score = int(base_env.score)
             target_fps = args.fps * args.fast_fps_multiplier if fast_forward else args.fps
             clock.tick(target_fps)
     finally:
+        update_high_score(session_max_score)
         if writer is not None:
             writer.close()
         env.close()

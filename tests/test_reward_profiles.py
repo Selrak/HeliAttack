@@ -139,7 +139,7 @@ def test_defense_v1_reward_profile_penalties():
     
     # Test terminal penalty
     obs, info = env.reset(seed=42)
-    # Move player out of bounds to trigger fall
+    # Move player out of bounds to trigger Python safety termination.
     env.unwrapped._y = 5000 
     obs, reward, terminated, truncated, info = env.step([1, 0, 0, 0, 0, 0])
     

@@ -2,143 +2,314 @@
 
 ## Goal
 
-Add replay metadata so HA2 replay files record which simulator semantics produced them, and make replay verification/playback use those recorded semantics by default.
+Repair the HA2 HUD graphics to use the original extracted HUD assets instead of hand-drawn placeholder bars.
 
-This is needed because `ha2_env.py` and `ha2_env_legacy.py` can now diverge, and `collision_model="rect"` vs `collision_model="ffdec_polygon"` can change replay hashes and visible hit/damage behavior.
+This is a visual-only HUD repair.
 
-## Non-goals
+Do not change gameplay mechanics.
 
-Do not change gameplay, collisions, rewards, observations, action spaces, training, animation, HUD, fullscreen, or debug-panel behavior.
+## Required fixes
 
-Do not make `ffdec_polygon` the default.
+Fix the current HUD implementation so that:
 
-Do not modify `ha2_env_legacy.py` gameplay logic.
+- `HyperJump` uses the original HA2 bar graphics, not `pygame.draw.rect` placeholder graphics.
+- The label is `HyperJump:` with the colon.
+- Add the missing `Health:` label near the healthbar.
+- Add the current weapon icon for the starting MachineGun.
+- Add the ammo text `Infinite x `.
+- Add the reload bar using the original HA2 reload graphics.
+- Keep HUD rendering centralized in `ha2_env.py`.
+- Do not duplicate HUD drawing in `play_human.py`, `watch_model.py`, or `play_replay.py`.
+
+## What Codex should replace
+
+The current implementation draws the HyperJump bar manually with `pygame.draw.rect`.
+
+Replace that visual placeholder with the original extracted HUD assets.
+
+Do not remove the exact HUD font support added in the previous task.
+
+## Technical constants
+
+Gameplay area:
+
+- width: `450`
+- height: `320`
+
+Use the exact HUD font already copied to:
+
+- `assets_ffdec/fonts/19_standard 07_63.ttf`
+
+### Top-left dynamic text positions
+
+Use these coordinates instead of the earlier approximate `x=2` layout:
+
+Time line:
+
+- foreground: `(4, 2)`
+- shadow: `(5, 3)`
+
+Score line:
+
+- foreground: `(4, 15)`
+- shadow: `(5, 16)`
+
+High score line:
+
+- foreground: `(4, 28)`
+- shadow: `(5, 29)`
+
+Text content remains:
+
+- `Time: <seconds> seconds     Helis: <heli_count>`
+- `Score: <display_score>`
+- `High Score: <display_high_score>`
+
+### Health label and bar
+
+Add the label:
+
+- text: `Health:`
+- foreground: `(390, 2)`
+- shadow: `(391, 3)`
+
+Use the existing healthbar logic, but align it with the original HUD placement if practical:
+
+- health sprite position: `(431, 0)`
+- health sprite: `assets_ffdec/sprites/DefineSprite_176/1.png`
+- existing component bitmaps:
+  - `assets_ffdec/images/170.png`
+  - `assets_ffdec/images/174.png`
+
+Keep the current bottom-anchored health fill rule.
+
+If changing the healthbar from the previous `(429, 0)` offset causes a visible regression, stop and report rather than guessing.
+
+### HyperJump bar
+
+Use original assets:
+
+- full sprite: `assets_ffdec/sprites/DefineSprite_163/1.png`
+- base bitmap: `assets_ffdec/images/157.png`
+- fill bitmap: `assets_ffdec/images/161.png`
+
+Position:
+
+- label text: `HyperJump:`
+- label foreground: `(57, 306)`
+- label shadow: `(58, 307)`
+- bar sprite position: `(129, 302)`
+
+Fill rule:
+
+- `fraction = clamp(hyperjump / 150.0, 0.0, 1.0)`
+- use the original base bitmap as the empty/background bar
+- crop or mask the original fill bitmap horizontally according to `fraction`
+- fill grows left to right
+
+Do not use primitive rectangle graphics for this bar.
+
+### Reload bar
+
+Add the reload label and bar.
+
+Use original assets:
+
+- full ready sprite: `assets_ffdec/sprites/DefineSprite_156/1.png`
+- base bitmap: `assets_ffdec/images/147.png`
+- orange fill bitmap: `assets_ffdec/images/151.png`
+- ready yellow bitmap: `assets_ffdec/images/153.png`
+
+Position:
+
+- label text: `Reload: `
+- label foreground: `(364, 306)`
+- label shadow: `(365, 307)`
+- bar sprite position: `(407, 302)`
+
+AS-backed behavior:
+
+- while reloading:
+  - hide the yellow ready layer;
+  - draw the base bitmap;
+  - draw a horizontally cropped orange fill bitmap;
+  - fraction = `gun_reloadtime / MACHINEGUN_RELOADTIME`, clamped to `[0, 1]`;
+- when ready and bullets are available:
+  - show the yellow ready layer;
+  - this can be implemented by drawing the full ready sprite or by drawing the yellow bitmap over the base.
+
+For the starting MachineGun:
+
+- `MACHINEGUN_RELOADTIME = 5`
+- bullets are infinite, so the gun is available when reload is ready.
+
+### Weapon icon
+
+Add the starting weapon icon:
+
+- sprite: `assets_ffdec/sprites/DefineSprite_205/1.png`
+- position: `(416, 269)`
+
+Frame 1 is the starting MachineGun icon.
+
+Do not implement weapon switching in this task.
+
+### Ammo text
+
+Add the ammo text for the current starting weapon:
+
+- text: `Infinite x `
+- foreground position: `(363, 287)`
+- shadow position: `(364, 288)`
+- right-align it in a width of about `57 px`
+
+Use the exact HUD font and the same black-shadow/white-foreground rule.
+
+Do not implement finite ammo counts in this task.
+
+## Optional future constants to record, not implement now
+
+The original HUD also includes:
+
+- `TimeDistort:` label at foreground `(209, 306)`, shadow `(210, 307)`
+- `bullettime` bar at `(282, 302)`
+
+Do not implement bullet time behavior in this task.
+
+Record these constants in `docs/parity_notes.md` or `docs/ai/CURRENT_STATE.md` only if useful.
 
 ## Files to inspect
 
-- `ha2_replay.py`
 - `ha2_env.py`
-- `ha2_env_legacy.py`
+- `ha2_high_score.py`
+- `scripts/play_human.py`
+- `scripts/watch_model.py`
 - `scripts/play_replay.py`
-- any replay verification script
-- scripts that create `JsonlReplayWriter`, especially `scripts/play_human.py` and `scripts/watch_model.py`
-- existing replay tests
+- `scripts/evaluate_model.py`
+- `tests/test_env_basic.py`
+- `tests/test_high_score.py`
+- `docs/parity_notes.md`
+- `docs/ai/CURRENT_STATE.md`
+- `docs/ai/CODEX_SESSION_LOG.md`
 
-## Implementation plan
+## Files likely to modify
 
-1. Run `git status --short` and record any pre-existing changes in the session log.
+Likely:
 
-2. Extend new replay headers with:
+- `ha2_env.py`
+- `tests/test_env_basic.py`
+- possibly `docs/parity_notes.md`
+- `docs/ai/CURRENT_STATE.md`
+- `docs/ai/CODEX_SESSION_LOG.md`
 
-   - `simulator_id`
-   - `simulator_version`
-   - `simulation_semantics`
+Do not modify `ha2_env_legacy.py`.
 
-   `simulation_semantics` must include at least `collision_model`.
+Do not modify gameplay scripts except if a test reveals that a HUD asset path is not loaded correctly.
 
-   Example header fields:
+Do not change high-score persistence behavior unless directly required by the HUD repair.
 
-       {
-         "simulator_id": "ha2_env",
-         "simulator_version": "0.7",
-         "simulation_semantics": {
-           "collision_model": "rect"
-         }
-       }
+## Implementation guidance
 
-3. Preserve compatibility with old replay files.
+Centralize all visual HUD composition in `ha2_env.py`.
 
-   For old headers without `simulator_id`, infer:
+Add image loading keys for:
 
-   - `simulator_id = "ha2_env_legacy"`
-   - `collision_model = "rect"`
+- reload full sprite / base / fill / ready
+- hyperjump full sprite / base / fill
+- weapon icon frame 1
 
-   when the old `env_version` clearly corresponds to the pre-split simulator.
+Add small helper functions if useful:
 
-   If the mapping is unclear, fail with a clear error.
+- draw HUD text with shadow;
+- draw horizontally masked HUD bar;
+- draw reload bar;
+- draw HyperJump bar;
+- draw weapon/ammo block.
 
-4. Add a small explicit simulator resolver for replay use.
+The horizontally masked bar helper should use copied/cropped surfaces from the original fill bitmap, not colored rectangles.
 
-   It should support:
+Keep all rendering deterministic.
 
-   - `recorded`: use the simulator and semantics from the replay header;
-   - `current`: force `ha2_env`;
-   - `legacy`: force `ha2_env_legacy`.
+Do not add external image dependencies.
 
-5. Update `verify_replay_file()`.
+## Tests
 
-   By default, strict verification must use the recorded simulator semantics.
+Add or update tests to check:
 
-   Add an override parameter for intentional cross-simulator comparison.
+- the needed HUD assets are loadable;
+- HUD debug values are unchanged from the previous task;
+- rgb_array rendering still works;
+- the render path does not crash when drawing HyperJump, reload, weapon icon, ammo, and Health label;
+- viewer scripts do not contain duplicate HUD drawing logic.
 
-6. Update `scripts/play_replay.py`.
-
-   Default: replay with recorded simulator semantics.
-
-   Add an option such as:
-
-   - `--replay-env recorded`
-   - `--replay-env current`
-   - `--replay-env legacy`
-
-   If the chosen simulator differs from the recorded one, print a clear warning that replay hashes and visual hit/damage behavior may diverge.
-
-7. Ensure replay-producing scripts get the new metadata automatically through `JsonlReplayWriter`.
-
-8. Add focused tests for:
-
-   - new headers contain `simulator_id`, `simulator_version`, and `simulation_semantics.collision_model`;
-   - old headers are inferred as legacy/rect when possible;
-   - strict verification uses recorded semantics by default;
-   - explicit override to current/legacy is possible;
-   - invalid simulator or collision metadata fails clearly.
-
-9. Update:
-
-   - `docs/ai/CURRENT_STATE.md`
-   - `docs/ai/CODEX_SESSION_LOG.md`
-   - `docs/ai/VALIDATION.md` if commands changed
+Avoid brittle pixel-perfect tests.
 
 ## Validation
 
 Run:
 
-- `python -m py_compile ha2_env.py ha2_env_legacy.py ha2_replay.py scripts/play_replay.py`
-- `python -m pytest tests/test_replay_metadata.py`
+- `python -m py_compile ha2_env.py ha2_high_score.py scripts/play_human.py scripts/watch_model.py scripts/play_replay.py scripts/evaluate_model.py`
+- `python -m pytest tests/test_env_basic.py`
+- `python -m pytest tests/test_high_score.py`
 - `python -m pytest`
-- `python -m scripts.play_replay --help`
 
 Do not run training.
 
+## Manual checks
+
+Run:
+
+- `python -m scripts.play_human`
+
+Verify visually:
+
+- `Health:` appears near the healthbar.
+- The healthbar remains correct.
+- `HyperJump:` has the original cyan bar graphics.
+- The HyperJump fill changes with charge.
+- `Reload:` appears at the bottom right.
+- The reload bar uses the original orange/yellow graphics.
+- The starting MachineGun icon appears at the bottom right.
+- `Infinite x ` appears near the weapon icon.
+- Top-left text still appears with exact font and shadow.
+- The debug side panel remains separate.
+- `play_human`, `watch_model`, and `play_replay` all get the HUD through `env.render(...)`.
+
 ## Acceptance criteria
 
-- New replay files contain simulator provenance and collision semantics.
-- Old replay files remain loadable with clear legacy/rect inference.
-- Strict verification uses recorded semantics by default.
-- Graphical replay uses recorded semantics by default.
-- Cross-simulator replay is possible only through an explicit option and prints a warning.
-- Tests pass.
-- Project state/log docs are updated.
+This task is complete if:
+
+- no hand-drawn placeholder rectangle remains for the HyperJump bar;
+- HyperJump and reload bars use original extracted graphics;
+- `Health:` label is present;
+- MachineGun icon is present;
+- `Infinite x ` is present;
+- reload readiness is visually represented with the original ready/yellow layer;
+- HUD rendering remains centralized in `ha2_env.py`;
+- `ha2_env_legacy.py` is unchanged;
+- no gameplay mechanics changed;
+- tests pass;
+- docs/session log are updated.
 
 ## Stop conditions
 
 Stop and report if:
 
-- old replay compatibility cannot be preserved cleanly;
-- `ha2_env_legacy.py` cannot be imported;
-- simulator identity cannot be determined from wrapped environments;
-- this requires gameplay or replay hash changes beyond metadata;
+- the needed assets are missing from `assets_ffdec`;
+- the current repository does not contain the extracted bar/icon assets;
+- exact healthbar placement conflicts with the previously accepted visual adjustment;
+- implementing masked original bars requires a broad rendering refactor;
+- this task starts touching gameplay or replay semantics;
 - unrelated uncommitted changes make the task unsafe to isolate.
 
 ## Required Codex session log
 
-Update `docs/ai/CURRENT_STATE.md` and `docs/ai/CODEX_SESSION_LOG.md` with:
+Update `docs/ai/CODEX_SESSION_LOG.md` with:
 
 - files changed;
 - commands run;
 - pass/fail results;
-- new replay metadata fields;
-- old replay compatibility rule;
-- tests added;
-- remaining risks;
-- recommended next step.
+- exact HUD assets used;
+- whether the healthbar was left at the previous adjusted position or restored to `(431, 0)`;
+- confirmation that visual HUD drawing is still centralized;
+- remaining HUD gaps.

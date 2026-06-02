@@ -1606,3 +1606,58 @@ Add a cross-platform `scripts.evaluate_matrix` runner for model/pressure evaluat
 - Final local `reports/parity_traces/heli_shoots_hero_240.jsonl` was regenerated without `--skip-intro`, so it records `skip_intro=false`.
 - Commands run: `python -m scripts.record_scripted_trace --scenario heli_shoots_hero_240 --no-screenshots`; same command with `--skip-intro`; metadata header inspection; `python -m pytest tests/test_scripted_trace.py tests/test_replay_metadata.py -q`; `python -m pytest -q`.
 - Results: targeted tests passed (`16 passed`); full pytest passed (`145 passed, 3 warnings`).
+
+## 2026-05-19 Europe/Paris - HA2 Gameplay HUD And High Score
+
+- Pre-existing status: `docs/ai/NEXT_CODEX_TASK.md` was modified; prior handoff bundles and report artifacts were untracked.
+- Files changed: `.gitignore`, `ha2_env.py`, `ha2_high_score.py`, `scripts/play_human.py`, `scripts/watch_model.py`, `scripts/evaluate_model.py`, `tests/test_high_score.py`, `tests/test_env_basic.py`, `tests/test_experiment_outputs.py`, `docs/ai/CURRENT_STATE.md`, `docs/ai/VALIDATION.md`, `docs/parity_notes.md`, `docs/ai/CODEX_SESSION_LOG.md`.
+- Copied font: `reference_exports/ffdec_ha2/fonts/19_standard 07_63.ttf` -> `assets_ffdec/fonts/19_standard 07_63.ttf`.
+- Implemented centralized HUD rendering in `ha2_env.py`: Time/Helis, Score, High Score, existing healthbar, and HyperJump recharge bar.
+- High-score file path: `state/ha2_high_scores.json`; it is ignored by Git and updated by human play, model watch, and evaluation, not by training rollouts or env rendering.
+- Viewer scripts do not draw duplicate HUD elements; they get HUD output through `env.render(...)`.
+- Exact copied font is used when present; fallback small Pygame font is used if missing.
+- Commands run: py_compile for HUD/high-score modules and touched scripts; focused pytest (`40 passed`); full pytest (`151 passed, 3 warnings`).
+- Handoff bundle: `docs/ai/codex_task_bundle_20260519_193352_hud-score.zip`.
+- Manual GUI check not run in this Codex session.
+- Remaining HUD parity gaps: exact decorative details, ammo, reload, sounds, and full gameover HUD remain future work.
+
+## 2026-05-20 Europe/Paris - HA2 HUD Graphics Repair
+
+- Pre-existing status: `docs/ai/NEXT_CODEX_TASK.md` was updated to the HUD graphics repair task; prior handoff bundles and report artifacts remained untracked.
+- Files changed: `ha2_env.py`, `tests/test_env_basic.py`, `docs/parity_notes.md`, `docs/ai/CURRENT_STATE.md`, `docs/ai/VALIDATION.md`, `docs/ai/CODEX_SESSION_LOG.md`.
+- Exact HUD assets used: `assets_ffdec/fonts/19_standard 07_63.ttf`, `assets_ffdec/sprites/DefineSprite_163/1.png`, `assets_ffdec/images/157.png`, `assets_ffdec/images/161.png`, `assets_ffdec/sprites/DefineSprite_156/1.png`, `assets_ffdec/images/147.png`, `assets_ffdec/images/151.png`, `assets_ffdec/images/153.png`, `assets_ffdec/sprites/DefineSprite_205/1.png`, and the existing healthbar assets `assets_ffdec/images/170.png` / `174.png`.
+- Visual HUD changes: Time/Helis, Score, High Score, `Health:`, `HyperJump:`, `Reload:`, `Infinite x `, the starting MachineGun icon, and the original healthbar are all rendered centrally from `ha2_env.py`.
+- Healthbar placement: restored to the original `431, 0` position with the existing FFDEC healthbar bitmaps.
+- High-score persistence remains at `state/ha2_high_scores.json`; it was not changed by this HUD repair.
+- Viewer scripts still do not draw HUD elements themselves; they benefit through `env.render(...)`.
+- Exact copied font was used; fallback font path remains available if the exact TTF is missing.
+- Commands run: py_compile for `ha2_env.py`, `ha2_high_score.py`, and the viewer/eval scripts; focused pytest (`40 passed`); full pytest (`151 passed, 3 warnings`).
+- Handoff bundle: `docs/ai/codex_task_bundle_20260520_095948_hud-graphics.zip`.
+- Remaining HUD gaps: exact Flash decorative details, ammo/reload animation polish, sounds, and full gameover HUD remain future work.
+
+## 2026-06-02 Europe/Paris - Universal Player Death And Bounds Safety
+
+- Files changed: `ha2_env.py`, `ha2_replay.py`, `scripts/evaluate_model.py`, `tests/test_env_basic.py`, `tests/test_rl_interface.py`, `tests/test_replay_metadata.py`, `tests/test_experiment_outputs.py`, `tests/test_evaluate_matrix.py`, `docs/parity_notes.md`, `docs/ai/CURRENT_STATE.md`, and `docs/ai/CODEX_SESSION_LOG.md`.
+- New `ENV_VERSION`: `1.0`.
+- Implemented universal evolving-simulator death: `health <= 0` clamps health to `0`, terminates with `termination_reason="player_death"`, and applies for `legacy`, `combat_v1`, and `combat_bullets_v1`.
+- `training_profile` no longer controls whether player death exists; reward/observation behavior remains profile-specific.
+- Renamed normal evolving-env vertical out-of-map termination to `out_of_bounds_safety`; lateral world sides remain collision bounds and are not a gameplay fall-death rule.
+- Replay step debug now records `termination_reason`; new replays record natural universal `player_death` termination, while legacy simulator replay handling remains unchanged.
+- `scripts.evaluate_model` no longer falls back to `"fall"` for generic terminations and now reports `out_of_bounds_safety_rate` while preserving the existing `fall_rate` field for compatibility.
+- Validation: `python -m py_compile ha2_env.py ha2_replay.py scripts/play_human.py scripts/watch_model.py scripts/evaluate_model.py` passed; `.venv\Scripts\python.exe -m pytest tests/test_env_basic.py` passed (`35 passed`); `.venv\Scripts\python.exe -m pytest tests/test_replay_metadata.py` passed (`9 passed`); `.venv\Scripts\python.exe -m pytest` passed (`157 passed, 3 warnings`).
+- Handoff bundle: `docs/ai/codex_task_bundle_20260602_112019_death-bounds.zip`.
+- Manual GUI checks and training were not run.
+
+## 2026-06-02 Europe/Paris - HUD Graphics Verification
+
+- Pre-existing `git status --short` summary: dirty worktree included prior modified docs/code/tests (`.gitignore`, `docs/ai/*`, `docs/parity_notes.md`, `ha2_env.py`, `ha2_replay.py`, viewer/eval scripts, and multiple tests), untracked prior handoff bundles/reports, `assets_ffdec/fonts/`, `ha2_high_score.py`, and `tests/test_high_score.py`.
+- Files changed in this session: `tests/test_env_basic.py`, `docs/ai/CURRENT_STATE.md`, and `docs/ai/CODEX_SESSION_LOG.md`.
+- Inspected HUD implementation in `ha2_env.py`: visual HUD drawing is centralized in `_draw_gameplay_hud()` / `_draw_player_health_hud()`; viewer scripts do not draw duplicate normal HUD elements.
+- Exact HUD assets confirmed in use: `assets_ffdec/fonts/19_standard 07_63.ttf`, `assets_ffdec/sprites/DefineSprite_176/1.png`, `assets_ffdec/images/170.png`, `assets_ffdec/images/174.png`, `assets_ffdec/sprites/DefineSprite_163/1.png`, `assets_ffdec/images/157.png`, `assets_ffdec/images/161.png`, `assets_ffdec/sprites/DefineSprite_156/1.png`, `assets_ffdec/images/147.png`, `assets_ffdec/images/151.png`, `assets_ffdec/images/153.png`, and `assets_ffdec/sprites/DefineSprite_205/1.png`.
+- Placeholder HUD graphics status: the prior hand-drawn HyperJump rectangle had already been replaced by original bitmap/cropped-surface rendering; this session added tests that cover the healthbar, HyperJump, reload, and MachineGun icon asset loads plus viewer-script non-duplication.
+- Healthbar position: restored/kept at original `(431, 0)` with existing FFDEC healthbar bitmaps.
+- Commands run: `python -m py_compile ha2_env.py ha2_high_score.py scripts/play_human.py scripts/watch_model.py scripts/play_replay.py scripts/evaluate_model.py`; `.venv\Scripts\python.exe -m pytest tests/test_env_basic.py`; `.venv\Scripts\python.exe -m pytest tests/test_high_score.py`; `.venv\Scripts\python.exe -m pytest`.
+- Results: py_compile passed; env basic tests passed (`36 passed`); high-score tests passed (`3 passed`); full pytest passed (`158 passed, 3 warnings`).
+- Handoff bundle: `docs/ai/codex_task_bundle_20260602_113051_hud-graphics.zip`.
+- Manual GUI checks and training were not run.
+- Remaining HUD gaps: exact Flash decorative HUD details, bullet-time HUD behavior, sounds, full gameover HUD, pickups, weapon switching, and finite ammo counts remain future work.

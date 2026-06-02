@@ -76,6 +76,34 @@ def test_replay_header_records_skip_intro_semantics(tmp_path):
     assert verify_replay_file(path) == 1
 
 
+def test_new_replay_records_universal_player_death(tmp_path):
+    path = tmp_path / "player_death.jsonl"
+    env = HeliAttack2Env(
+        render_mode=None,
+        training_profile="legacy",
+        skip_intro=True,
+    )
+    obs, _info = env.reset(seed=3)
+    try:
+        with JsonlReplayWriter(path, env, 3, obs) as writer:
+            action = [1, 0, 0, 0, 0, 0]
+            for _ in range(600):
+                obs, reward, terminated, truncated, info = env.step(action)
+                writer.append_step(env, action, obs, reward, terminated, truncated, info)
+                if terminated or truncated:
+                    break
+    finally:
+        env.close()
+
+    header, steps = load_replay(path)
+    assert header["simulator_id"] == CURRENT_SIMULATOR_ID
+    assert header["training_profile"] == "legacy"
+    assert steps[-1]["terminated"] is True
+    assert steps[-1]["debug"]["termination_reason"] == "player_death"
+    assert steps[-1]["debug"]["player_health"] == 0
+    assert verify_replay_file(path) == len(steps)
+
+
 def test_old_header_without_simulator_metadata_infers_legacy_rect(tmp_path):
     path = tmp_path / "old.jsonl"
     _write_short_legacy_replay(path)

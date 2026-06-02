@@ -56,6 +56,7 @@ def fake_eval_report(*, pressure_profile: str) -> dict:
         "rates": {
             "death_rate": 0.0,
             "fall_rate": 0.0,
+            "out_of_bounds_safety_rate": 0.0,
             "timeout_rate": 1.0,
             "damage_free_episode_rate": 0.0,
             "visible_enemy_bullet_hit_rate_against_player": 0.1,

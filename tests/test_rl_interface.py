@@ -64,14 +64,14 @@ def test_combat_v1_player_death_terminates():
     env.close()
 
 
-def test_combat_v1_fall_terminates():
+def test_combat_v1_out_of_bounds_safety_terminates():
     env = HeliAttack2Env(render_mode=None, training_profile="combat_v1")
     env.reset(seed=0)
     env._y = env.map_pixel_height + 1
     _obs, _reward, terminated, truncated, info = env.step(IDLE_ACTION)
     assert terminated is True
     assert truncated is False
-    assert info["termination_reason"] == "fall"
+    assert info["termination_reason"] == "out_of_bounds_safety"
     env.close()
 
 

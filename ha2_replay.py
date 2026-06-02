@@ -300,6 +300,7 @@ class JsonlReplayWriter:
                     "pressure_profile": getattr(base_env, "pressure_profile", "normal"),
                     "policy_action": policy_action,
                     "full_action": full_action,
+                    "termination_reason": info.get("termination_reason"),
                     "reward_breakdown": info.get("reward_breakdown"),
                     "camera": info.get("camera"),
                     "contact": info.get("contact"),

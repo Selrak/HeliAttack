@@ -16,12 +16,14 @@ import pygame
 
 import ha2_collision as collision
 import ha2_constants as const
+from ha2_high_score import display_high_score, display_score, load_high_score
 
 
 REPO_ROOT = Path(__file__).resolve().parent
 HA2_ASSET_DIR = REPO_ROOT / "assets_ffdec"
+HA2_HUD_FONT_PATH = HA2_ASSET_DIR / "fonts" / "19_standard 07_63.ttf"
 ENV_NAME = "HeliAttack2Env"
-ENV_VERSION = "0.9"
+ENV_VERSION = "1.0"
 
 AIM_BINS = 32
 DEFAULT_AIM_BIN = 0
@@ -61,15 +63,20 @@ INTRO_MODE_AS = "as_intro"
 INTRO_MODE_SKIP = "skip_intro"
 INTRO_MODE_LEGACY_FALL_PROXY = "legacy_fall_proxy"
 INTRO_MODES = {INTRO_MODE_AS, INTRO_MODE_SKIP, INTRO_MODE_LEGACY_FALL_PROXY}
+TERMINATION_PLAYER_DEATH = "player_death"
+TERMINATION_OUT_OF_BOUNDS_SAFETY = "out_of_bounds_safety"
 AS_STW = math.ceil(const.SCREEN_WIDTH / const.TILE_SIZE)
 AS_STH = math.ceil(const.SCREEN_HEIGHT / const.TILE_SIZE)
 AS_SPW = AS_STW * const.TILE_SIZE
 AS_SPH = AS_STH * const.TILE_SIZE
 DEBUG_PANEL_WIDTH = 520
-HUD_HEALTH_X = 429
+HUD_HEALTH_X = 431
 HUD_HEALTH_Y = 0
-HUD_HEALTH_BITMAP_X = 4
+HUD_HEALTH_BITMAP_X = 0
 HUD_HEALTH_BITMAP_Y = 0
+HUD_TEXT_FONT_SIZE = 8
+HUD_TEXT_SHADOW = (0, 0, 0)
+HUD_TEXT_FOREGROUND = (255, 255, 255)
 TRAINING_PROFILES = {"legacy", "combat_v1", "combat_bullets_v1"}
 CONTROL_MODE_FULL = "full"
 CONTROL_MODE_MOVEMENT_SCRIPTED_ATTACK_DIRECT = "movement_scripted_attack_direct"
@@ -269,6 +276,8 @@ class HeliAttack2Env(gym.Env):
         self.window = None
         self.clock = None
         self.font = None
+        self.hud_font = None
+        self.hud_font_uses_exact_asset = False
         self.images: dict[str, pygame.Surface | None] = {}
         self.tiles: dict[int, pygame.Surface | None] = {}
 
@@ -443,6 +452,15 @@ class HeliAttack2Env(gym.Env):
             if not pygame.font.get_init():
                 pygame.font.init()
             self.font = pygame.font.SysFont(None, 18)
+        if self.hud_font is None:
+            if not pygame.font.get_init():
+                pygame.font.init()
+            if HA2_HUD_FONT_PATH.exists():
+                self.hud_font = pygame.font.Font(str(HA2_HUD_FONT_PATH), HUD_TEXT_FONT_SIZE)
+                self.hud_font_uses_exact_asset = True
+            else:
+                self.hud_font = pygame.font.SysFont(None, 12)
+                self.hud_font_uses_exact_asset = False
 
     def _load_images(self) -> None:
         self._ensure_pygame_ready()
@@ -483,6 +501,14 @@ class HeliAttack2Env(gym.Env):
             "hud_health": load_img(Path("sprites") / "DefineSprite_176" / "1.png"),
             "hud_health_base": load_img(Path("images") / "170.png"),
             "hud_health_fill": load_img(Path("images") / "174.png"),
+            "hud_hyperjump_full": load_img(Path("sprites") / "DefineSprite_163" / "1.png"),
+            "hud_hyperjump_base": load_img(Path("images") / "157.png"),
+            "hud_hyperjump_fill": load_img(Path("images") / "161.png"),
+            "hud_reload_full": load_img(Path("sprites") / "DefineSprite_156" / "1.png"),
+            "hud_reload_base": load_img(Path("images") / "147.png"),
+            "hud_reload_fill": load_img(Path("images") / "151.png"),
+            "hud_reload_ready": load_img(Path("images") / "153.png"),
+            "hud_weapon_icon": load_img(Path("sprites") / "DefineSprite_205" / "1.png"),
             "heli1": compose_heli_frame(flipped=False),
             "heli2": compose_heli_frame(flipped=True),
             "bg": load_img(Path("images") / "410.jpg"),
@@ -1566,31 +1592,33 @@ class HeliAttack2Env(gym.Env):
         gun_event: dict[str, Any],
         enemy_event: dict[str, Any],
     ):
+        if self.health <= 0:
+            self.health = 0
         self.lastHealth = int(self.health)
-        fell = bool(self._y > self.map_height * const.TILE_SIZE)
         player_dead = bool(self.health <= 0)
+        out_of_bounds_safety = bool(self._y > self.map_height * const.TILE_SIZE)
         self.episode_step_count += 1
 
         reward_breakdown = None
         termination_reason = "none"
         truncated = False
+        terminated = player_dead or out_of_bounds_safety
+        if player_dead:
+            termination_reason = TERMINATION_PLAYER_DEATH
+        elif out_of_bounds_safety:
+            termination_reason = TERMINATION_OUT_OF_BOUNDS_SAFETY
+
         if self.training_profile == "legacy":
             reward = 0.1
-            terminated = fell
-            if terminated:
+            if out_of_bounds_safety:
                 reward = -10.0
-                termination_reason = "fall"
         else:
             killed_helis = len(enemy_event["killed_enemy_ids"])
             score_delta = max(0, int(self.score) - before_score)
             player_damage = int(enemy_event["player_damage"])
-            terminated = fell or player_dead
-            if fell:
-                termination_reason = "fall"
-            elif player_dead:
-                termination_reason = "player_death"
-            elif (
-                self.max_episode_steps is not None
+            if (
+                not terminated
+                and self.max_episode_steps is not None
                 and self.episode_step_count >= self.max_episode_steps
             ):
                 truncated = True
@@ -2039,6 +2067,7 @@ class HeliAttack2Env(gym.Env):
             else:
                 pygame.draw.circle(canvas, (255, 80, 0), (round(bullet_x), round(bullet_y)), 3)
 
+        self._draw_gameplay_hud(canvas)
         self._draw_player_health_hud(canvas)
 
         if debug_collision:
@@ -2082,7 +2111,116 @@ class HeliAttack2Env(gym.Env):
         rotated_rect = rotated.get_rect(center=(rotated_center.x, rotated_center.y))
         canvas.blit(rotated, rotated_rect)
 
+    def _hud_values(self) -> dict[str, Any]:
+        raw_high_score = load_high_score()
+        hyperjump_fraction = max(0.0, min(1.0, float(self.hyperjump) / 150.0))
+        reload_ready = bool(
+            (math.isinf(self.gun_reloadtime) or self.gun_reloadtime >= MACHINEGUN_RELOADTIME)
+            and self.gun_bullets > 0
+        )
+        return {
+            "elapsed_seconds": int(math.floor(self.tick / 30)),
+            "heli_count": int(self.rthelis),
+            "display_score": display_score(self.score),
+            "raw_high_score": int(raw_high_score),
+            "display_high_score": display_high_score(raw_high_score),
+            "hyperjump_fraction": hyperjump_fraction,
+            "reload_fraction": (
+                1.0
+                if reload_ready or math.isinf(self.gun_reloadtime)
+                else max(0.0, min(1.0, float(self.gun_reloadtime) / MACHINEGUN_RELOADTIME))
+            ),
+            "reload_ready": reload_ready,
+            "hud_font_path": str(HA2_HUD_FONT_PATH),
+            "hud_font_exact": bool(self.hud_font_uses_exact_asset),
+        }
+
+    def _draw_hud_text(self, canvas: pygame.Surface, text: str, x: int, y: int) -> None:
+        if self.hud_font is None:
+            return
+        shadow = self.hud_font.render(text, False, HUD_TEXT_SHADOW)
+        foreground = self.hud_font.render(text, False, HUD_TEXT_FOREGROUND)
+        canvas.blit(shadow, (x + 1, y + 1))
+        canvas.blit(foreground, (x, y))
+
+    def _draw_hud_text_right_aligned(
+        self,
+        canvas: pygame.Surface,
+        text: str,
+        right_edge: int,
+        y: int,
+    ) -> None:
+        if self.hud_font is None:
+            return
+        surface = self.hud_font.render(text, False, HUD_TEXT_FOREGROUND)
+        x = right_edge - surface.get_width()
+        shadow = self.hud_font.render(text, False, HUD_TEXT_SHADOW)
+        canvas.blit(shadow, (x + 1, y + 1))
+        canvas.blit(surface, (x, y))
+
+    def _blit_horizontal_fraction(
+        self,
+        canvas: pygame.Surface,
+        source: pygame.Surface | None,
+        x: int,
+        y: int,
+        fraction: float,
+    ) -> None:
+        if source is None:
+            return
+        fraction = max(0.0, min(1.0, float(fraction)))
+        width = round(source.get_width() * fraction)
+        if width <= 0:
+            return
+        area = pygame.Rect(0, 0, width, source.get_height())
+        canvas.blit(source, (x, y), area)
+
+    def _draw_gameplay_hud(self, canvas: pygame.Surface) -> None:
+        values = self._hud_values()
+        self._draw_hud_text(
+            canvas,
+            f"Time: {values['elapsed_seconds']} seconds     Helis: {values['heli_count']}",
+            4,
+            2,
+        )
+        self._draw_hud_text(canvas, f"Score: {values['display_score']}", 4, 15)
+        self._draw_hud_text(
+            canvas,
+            f"High Score: {values['display_high_score']}",
+            4,
+            28,
+        )
+        self._draw_hud_text(canvas, "HyperJump:", 57, 306)
+        self._draw_hud_text(canvas, "Reload: ", 364, 306)
+        self._draw_hud_text_right_aligned(canvas, "Infinite x ", 420, 287)
+        weapon_icon = self.images.get("hud_weapon_icon")
+        if weapon_icon is not None:
+            canvas.blit(weapon_icon, (416, 269))
+
+        hyperjump_full = self.images.get("hud_hyperjump_full")
+        hyperjump_base = self.images.get("hud_hyperjump_base")
+        hyperjump_fill = self.images.get("hud_hyperjump_fill")
+        if float(values["hyperjump_fraction"]) >= 1.0 and hyperjump_full is not None:
+            canvas.blit(hyperjump_full, (129, 302))
+        else:
+            self._blit_horizontal_fraction(canvas, hyperjump_base, 129, 302, 1.0)
+            self._blit_horizontal_fraction(canvas, hyperjump_fill, 129, 302, values["hyperjump_fraction"])
+
+        reload_full = self.images.get("hud_reload_full")
+        reload_base = self.images.get("hud_reload_base")
+        reload_fill = self.images.get("hud_reload_fill")
+        reload_ready = self.images.get("hud_reload_ready")
+        reload_fraction = float(values["reload_fraction"])
+        if bool(values["reload_ready"]) and reload_full is not None:
+            canvas.blit(reload_full, (407, 302))
+        elif bool(values["reload_ready"]) and reload_ready is not None:
+            canvas.blit(reload_ready, (407, 302))
+        else:
+            self._blit_horizontal_fraction(canvas, reload_base, 407, 302, 1.0)
+            self._blit_horizontal_fraction(canvas, reload_fill, 407, 302, reload_fraction)
+
     def _draw_player_health_hud(self, canvas: pygame.Surface) -> None:
+        self._draw_hud_text(canvas, "Health:", 390, 2)
         base = self.images.get("hud_health_base")
         fill = self.images.get("hud_health_fill")
         x = HUD_HEALTH_X + HUD_HEALTH_BITMAP_X
@@ -2626,7 +2764,7 @@ class HeliAttack2Env(gym.Env):
             "enemy_fire_interval_multiplier": int(self.enemy_fire_interval_multiplier),
             "state": self.get_state(),
             "camera": [round(v, 6) for v in self.get_camera()],
-            "player_health": int(self.health),
+            "player_health": max(0, int(self.health)),
             "last_player_damage_tick": self.last_player_damage_tick,
             "last_player_damage_amount": int(self.last_player_damage_amount),
             "grounded": bool(self.jump == 0 and self.yspeed == 0),
@@ -2646,9 +2784,10 @@ class HeliAttack2Env(gym.Env):
             "active_enemy_bullets": len(self.enemy_bullets),
             "last_action": list(self.last_action),
         }
+        info.update(self._hud_values())
+        info["termination_reason"] = self.last_termination_reason
         if self.training_profile in ("combat_v1", "combat_bullets_v1"):
             info["training_profile"] = self.training_profile
-            info["termination_reason"] = self.last_termination_reason
             info["reward_breakdown"] = (
                 dict(self.last_reward_breakdown)
                 if self.last_reward_breakdown is not None

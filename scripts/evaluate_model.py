@@ -16,6 +16,7 @@ from ha2_env import (
     policy_action_space_nvec,
     sim_action_space_nvec,
 )
+from ha2_high_score import update_high_score
 from ha2_replay import JsonlReplayWriter
 from scripts.experiment_utils import (
     ExperimentLayout,
@@ -230,6 +231,11 @@ def build_evaluation_report(
             "hit_rate": ratio_or_none(sum(row["heli_hits"] for row in stats), bullets_spawned_sum),
             "death_rate": sum(row["deaths"] for row in stats) / float(len(stats)) if stats else 0.0,
             "fall_rate": sum(row["falls"] for row in stats) / float(len(stats)) if stats else 0.0,
+            "out_of_bounds_safety_rate": (
+                sum(row["out_of_bounds_safety"] for row in stats) / float(len(stats))
+                if stats
+                else 0.0
+            ),
             "timeout_rate": sum(1 for row in stats if row["termination_reason"] == "time_limit") / float(len(stats)) if stats else 0.0,
             "input_motion_mismatch_rate": ratio_or_none(
                 sum(row["frames_pressing_left"] + row["frames_pressing_right"] for row in stats)
@@ -259,6 +265,10 @@ def build_evaluation_report(
         "replay_paths": replay_paths,
     }
     return report
+
+
+def update_high_score_from_eval_stats(stats: list[dict]) -> int:
+    return update_high_score(max((row["max_score"] for row in stats), default=0))
 
 
 def main(args_list: list[str] | None = None) -> None:
@@ -449,9 +459,12 @@ def main(args_list: list[str] | None = None) -> None:
                 "truncated": truncated,
                 "termination_reason": info.get(
                     "termination_reason",
-                    "fall" if terminated else "time_limit" if truncated else "none",
+                    "terminated" if terminated else "time_limit" if truncated else "none",
                 ),
                 "falls": int(info.get("termination_reason") == "fall"),
+                "out_of_bounds_safety": int(
+                    info.get("termination_reason") == "out_of_bounds_safety"
+                ),
                 "deaths": int(info.get("termination_reason") == "player_death"),
                 "max_x": max_x,
                 "final_score": final_score,
@@ -522,6 +535,8 @@ def main(args_list: list[str] | None = None) -> None:
             }
         )
 
+    updated_raw_high_score = update_high_score_from_eval_stats(stats)
+
     config = dict(config)
     config["training_profile"] = runtime_config.training_profile
     config["reward_profile"] = runtime_config.reward_profile
@@ -543,6 +558,7 @@ def main(args_list: list[str] | None = None) -> None:
         replay_paths=replay_paths,
         experiment_config=config,
     )
+    report["raw_high_score_after_eval"] = int(updated_raw_high_score)
     if forensics_collector is not None:
         stem = report_path.stem
         forensics_json_path = report_path.parent / f"damage_forensics_{stem}.json"

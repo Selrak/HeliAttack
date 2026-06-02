@@ -3,11 +3,13 @@
 Run from repo root after installing `requirements.txt`. Use the project venv (`.venv`) if the system Python does not have pytest/SB3:
 
 ```powershell
-python -m py_compile ha2_env.py ha2_env_legacy.py ha2_collision.py ha2_replay.py extract_ha2_data.py ha2_constants.py
+python -m py_compile ha2_env.py ha2_env_legacy.py ha2_collision.py ha2_replay.py ha2_high_score.py extract_ha2_data.py ha2_constants.py
+python -m py_compile ha2_env.py ha2_high_score.py scripts/play_human.py scripts/watch_model.py scripts/play_replay.py scripts/evaluate_model.py
 python -m py_compile scripts/runtime_config.py scripts/experiment_utils.py scripts/invocation_metadata.py scripts/train_parkour.py scripts/evaluate_model.py scripts/evaluate_matrix.py scripts/watch_model.py scripts/play_human.py scripts/play_replay.py scripts/run_experiment.py scripts/run_experiment_pair.py scripts/benchmark_vec_envs.py
 python -m py_compile scripts/compare_collision_models.py
 python -m py_compile scripts/build_ffdec_parity_bundle.py
 python -m pytest tests/test_collision_model.py tests/test_legacy_env.py
+python -m pytest tests/test_high_score.py tests/test_env_basic.py tests/test_experiment_outputs.py
 python -m scripts.compare_collision_models
 python scripts/build_ffdec_parity_bundle.py
 python -m pytest

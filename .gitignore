@@ -15,6 +15,7 @@ reports/parity_traces/
 reports/vec_env_benchmarks/
 reports/eval*.json
 reports/evaluations.npz
+state/ha2_high_scores.json
 reference_exports/
 wandb/
 *.gif

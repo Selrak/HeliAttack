@@ -1,6 +1,6 @@
 # Current State
 
-Last updated: 2026-05-19 Europe/Paris
+Last updated: 2026-06-02 Europe/Paris
 
 ## What Appears to Work
 - Python 3.11.9 is available locally; `.venv` has pytest and SB3 installed.
@@ -21,7 +21,7 @@ Last updated: 2026-05-19 Europe/Paris
 - Player healthbar HUD renders with original FFDEC healthbar bitmaps and the AS bottom-anchored mask-scale rule.
 - `scripts.play_human` accepts both `WASD` and `ZQSD` movement keys, and its mouse input helper falls back cleanly when no video system is active.
 - `scripts/export_ffdec_reference.ps1` can export broad FFDEC reference data from a SWF and auto-detects `C:\Program Files (x86)\FFDec\ffdec-cli.exe`.
-- `training_profile="combat_v1"` is available as an opt-in RL interface: 37-field bounded float32 vector observation, combat-aware reward, player-death/fall termination, and max-step truncation.
+- `training_profile="combat_v1"` is available as an opt-in RL interface: 37-field bounded float32 vector observation, combat-aware reward, universal player-death termination, out-of-bounds safety termination, and max-step truncation.
 - `training_profile="combat_bullets_v1"` is available, extending the observation to 84 dimensions by replacing the single nearest bullet with a top-10 visible bullet block to enable defensive maneuvering.
 - `reward_profile` logic supports `combat_default` (base rewards) and `defense_v1` (heavy penalties for player damage, edge camping, and inefficient inputs).
 - Reward profiles are now propagated through training, train-time eval, final eval, watch, and replay verification. New replay headers include `reward_profile`; replay step debug and eval reports include `reward_breakdown`.
@@ -77,7 +77,12 @@ Last updated: 2026-05-19 Europe/Paris
 - Default projectile collision now uses `collision_model="ffdec_polygon"` in the evolving HA2 simulator.
 - Explicit `collision_model="rect"` remains available for comparisons and legacy-style runs.
 - Heli death respawn is implemented; non-training side effects remain omitted: pickups, drops, random weapon rewards, explosions, shards, blood, sounds, and bullet-time refill.
-- Only the original player healthbar HUD is implemented; score/time/ammo/reload/hyperjump HUD composition remains future work.
+- Gameplay HUD now renders centrally from `ha2_env.py`: Time/Helis, Score, High Score, `Health:`, `HyperJump:`, `Reload:`, the starting MachineGun icon, and the existing healthbar.
+- HUD rendering now uses the exact extracted font `assets_ffdec/fonts/19_standard 07_63.ttf` and original bar/icon assets for HyperJump and Reload instead of placeholder rectangles.
+- HUD tests now assert that the original healthbar, HyperJump, reload, and MachineGun icon assets load, and that `play_human`, `watch_model`, and `play_replay` do not duplicate normal HUD drawing.
+- High score persists in ignored local JSON at `state/ha2_high_scores.json`; rendering reads it, while human play, model watch, and evaluation update it.
+- The healthbar is aligned at the original `431, 0` placement with the existing FFDEC healthbar bitmaps.
+- The original extracted HUD font is copied to `assets_ffdec/fonts/19_standard 07_63.ttf` and used when available, with a small Pygame fallback.
 - `combat_v1` is an RL interface layer only; it does not prove AS parity or tune PPO behavior.
 - `combat_v1` defensive visibility diagnostics use bullet center plus an 8 px margin against the gameplay viewport; exact Flash sprite visibility is not proven.
 - `enemy_fire_slow_2x`/`enemy_fire_slow_4x` are curriculum aids, not AS parity modes.
@@ -102,7 +107,9 @@ Last updated: 2026-05-19 Europe/Paris
 - `docs/ai/HA2_COLLISION_PARITY_AUDIT.md` and `docs/ai/FLASH_AS_FINDINGS.md` document AS/FFDEC collision evidence.
 - `ha2_env.py` defaults to `collision_model="ffdec_polygon"` for projectile hits against FFDEC-derived Heli, standing-player, and duck-player hit shapes. Heli transforms are frame-aware, frame 2 is mirrored, parent rotation is applied, and player 1 px outline strokes are included. Explicit `collision_model="rect"` remains available.
 - `ha2_env.py` defaults to `skip_intro=False`; runtime training/evaluation config defaults to `skip_intro=True`.
-- Evolving simulator `ENV_VERSION` is `0.9` after the startup semantics change.
+- Player health depletion is a universal evolving-simulator gameplay death rule: `health <= 0` terminates with `termination_reason="player_death"` for `legacy`, `combat_v1`, and `combat_bullets_v1`. `training_profile` no longer controls whether death exists; it only affects observations, rewards, and reward penalties.
+- Normal HA2 gameplay should not have a sideways fall-death rule. The evolving env treats left/right world sides as collision bounds; any remaining out-of-bounds termination is `out_of_bounds_safety` or legacy replay compatibility unless later AS evidence proves otherwise.
+- Evolving simulator `ENV_VERSION` is `1.0` after universal player death and out-of-bounds safety semantics.
 - `ha2_env_legacy.py` is used as the replay-compatible legacy simulator for old pre-split `env_version <= 0.6` replays without explicit simulator metadata.
 - `scripts.compare_collision_models` reports deterministic synthetic probe differences between rectangle and FFDEC polygon collision.
 - `scripts/build_ffdec_parity_bundle.py` builds `reports/ffdec_parity_core_ha2/ffdec_parity_core_ha2.zip` plus `manifest.json` and `manifest.md` for HA2 FFDEC parity analysis.
