@@ -14,6 +14,14 @@ from ha2_env import (
     HeliAttack2Env,
     make_controlled_env,
 )
+from ha2_gui import (
+    GuiSound,
+    GuiState,
+    add_common_gui_args,
+    advance_post_death_visuals,
+    handle_common_event,
+    terminal_reason,
+)
 from ha2_high_score import update_high_score
 from ha2_replay import JsonlReplayWriter
 from scripts.runtime_config import add_runtime_config_args, resolve_runtime_config, runtime_env_kwargs
@@ -63,10 +71,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Play/debug HA2 directly.")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--fps", type=int, default=30)
-    parser.add_argument("--slow-fps", type=int, default=8)
     parser.add_argument("--save-replay", type=Path)
     parser.add_argument("--record-gif", type=Path)
     parser.add_argument("--screenshot-dir", type=Path, default=Path("screenshots"))
+    add_common_gui_args(parser)
     add_runtime_config_args(
         parser,
         training_profile_default="legacy",
@@ -83,6 +91,9 @@ def main() -> None:
     )
     base_env: HeliAttack2Env = env.unwrapped
     obs, _info = env.reset(seed=args.seed)
+    gui_state = GuiState()
+    gui_sound = GuiSound(enabled=not args.no_sound, sound_debug=args.sound_debug)
+    gui_sound.sync(base_env)
     writer = (
         JsonlReplayWriter(args.save_replay, env, args.seed, obs)
         if args.save_replay is not None
@@ -90,83 +101,78 @@ def main() -> None:
     )
 
     clock = pygame.time.Clock()
-    paused = False
-    debug_overlay = True
-    collision_overlay = False
-    slow_motion = False
-    single_step = False
     frames = []
     screenshot_index = 1
-    running = True
     session_max_score = int(base_env.score)
 
     print(
         "Controls: A/D or Q/D or Left/Right move, W/Z/Up jump, S/Down duck, Shift hyperjump, "
-        "Left mouse aim/fire, P/Space pause, N step, R reset, F1 debug, F2 slow, Esc quit."
+        "Left mouse aim/fire, common GUI keys: Esc quit Enter/R restart F speed+ Shift+F speed- "
+        "1 reset speed P/Space pause N step F1 debug F3 hitboxes."
     )
     print(f"Pressure profile: {runtime_config.pressure_profile}")
 
-    env.render(
-        debug_overlay=debug_overlay,
-        debug_collision=collision_overlay,
+    base_env.render(
+        debug_overlay=gui_state.debug_overlay,
+        debug_collision=gui_state.collision_overlay,
         debug_lines=[
             "initializing",
-            "controls: mouse aim/fire F1 debug F2 slow F3 hitboxes P/Space pause N step R reset Esc quit",
+            "controls: mouse aim/fire " + " ".join(gui_state.common_debug_lines()),
         ],
     )
 
     try:
-        while running:
+        while gui_state.running:
             for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    running = False
-                elif event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_ESCAPE:
-                        running = False
-                    elif event.key in (pygame.K_p, pygame.K_SPACE):
-                        paused = not paused
-                    elif event.key == pygame.K_n:
-                        single_step = True
-                    elif event.key == pygame.K_F1:
-                        debug_overlay = not debug_overlay
-                    elif event.key == pygame.K_F2:
-                        slow_motion = not slow_motion
-                    elif event.key == pygame.K_F3:
-                        collision_overlay = not collision_overlay
-                    elif event.key == pygame.K_F12 and base_env.window is not None:
-                        path = save_screenshot(base_env.window, args.screenshot_dir, screenshot_index)
-                        screenshot_index += 1
-                        print(f"Saved screenshot: {path}")
-                    elif event.key == pygame.K_r:
-                        session_max_score = max(session_max_score, int(base_env.score))
-                        update_high_score(session_max_score)
-                        obs, _info = env.reset(seed=args.seed)
-                        if writer is not None:
-                            print("Replay recording stopped because reset events are not in schema v1.")
-                            writer.close()
-                            writer = None
+                command = handle_common_event(gui_state, event, pygame)
+                if command.screenshot and base_env.window is not None:
+                    path = save_screenshot(base_env.window, args.screenshot_dir, screenshot_index)
+                    screenshot_index += 1
+                    print(f"Saved screenshot: {path}")
+                if command.restart:
+                    session_max_score = max(session_max_score, int(base_env.score))
+                    update_high_score(session_max_score)
+                    gui_sound.stop_all()
+                    obs, _info = env.reset(seed=args.seed)
+                    gui_state.clear_terminal()
+                    gui_sound.sync(base_env)
+                    if writer is not None:
+                        print("Replay recording stopped because reset events are not in schema v1.")
+                        writer.close()
+                        writer = None
+            if not gui_state.running:
+                break
 
             action = action_from_keys(pygame.key.get_pressed(), env)
-            should_step = not paused or single_step
-            if should_step:
+            if gui_state.terminal_hold:
+                if (not gui_state.paused or gui_state.single_step) and gui_state.is_player_death_hold:
+                    advance_post_death_visuals(base_env, gui_state, force_one=gui_state.single_step)
+                gui_state.consume_single_step()
+            elif gui_state.should_advance_logic():
                 obs, reward, terminated, truncated, info = env.step(action)
+                gui_sound.sync(base_env, play_events=True)
                 session_max_score = max(session_max_score, int(base_env.score))
                 if writer is not None:
                     writer.append_step(env, action, obs, reward, terminated, truncated, info)
-                if terminated or truncated:
+                reason = terminal_reason(terminated, truncated, info)
+                if reason is not None:
                     update_high_score(session_max_score)
-                    obs, _info = env.reset(seed=args.seed)
-                single_step = False
+                    gui_state.enter_terminal(reason)
+                    gui_sound.sync(base_env)
+                    print(f"Terminal state ({reason}). Press R or Enter to restart, Esc to quit.")
+                gui_state.consume_single_step()
 
-            fps = args.slow_fps if slow_motion else args.fps
+            gui_sound.sync(base_env)
             extra = [
-                f"fps={clock.get_fps():.1f} target={fps} paused={paused} slow={slow_motion}",
+                f"fps={clock.get_fps():.1f} target={gui_state.target_fps(args.fps)}",
                 f"pressure={runtime_config.pressure_profile}",
-                "controls: mouse aim/fire F1 debug F2 slow F3 hitboxes F12 screenshot P/Space pause N step R reset Esc quit",
+                "controls: mouse aim/fire F12 screenshot",
+                *gui_state.common_debug_lines(),
+                *gui_sound.debug_lines(),
             ]
-            env.render(
-                debug_overlay=debug_overlay,
-                debug_collision=collision_overlay,
+            base_env.render(
+                debug_overlay=gui_state.debug_overlay,
+                debug_collision=gui_state.collision_overlay,
                 debug_lines=extra,
             )
 
@@ -176,8 +182,9 @@ def main() -> None:
                 frame3d = pygame.surfarray.array3d(base_env.window)
                 frames.append(np.transpose(frame3d, (1, 0, 2)))
 
-            clock.tick(fps)
+            clock.tick(gui_state.target_fps(args.fps))
     finally:
+        gui_sound.stop_all()
         update_high_score(session_max_score)
         if writer is not None:
             writer.close()

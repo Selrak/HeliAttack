@@ -59,6 +59,11 @@ HELI_SHOOT_RELOAD_BASE = 16
 ENEMY_BULLET_SPEED = 7.0
 ENEMY_BULLET_DAMAGE = 10
 ENEMY_BULLET_VISIBILITY_MARGIN = 8.0
+VISUAL_EFFECT_BOOM_FRAMES = 10
+VISUAL_EFFECT_SHARD_FRAMES = 6
+VISUAL_EFFECT_BLOOD_FRAMES = 12
+VISUAL_EFFECT_HELI_DESTROYED_FRAMES = 2
+VISUAL_EFFECT_LIFETIME_FRAMES = 240
 INTRO_MODE_AS = "as_intro"
 INTRO_MODE_SKIP = "skip_intro"
 INTRO_MODE_LEGACY_FALL_PROXY = "legacy_fall_proxy"
@@ -280,6 +285,8 @@ class HeliAttack2Env(gym.Env):
         self.hud_font_uses_exact_asset = False
         self.images: dict[str, pygame.Surface | None] = {}
         self.tiles: dict[int, pygame.Surface | None] = {}
+        self.visual_effects: list[dict[str, Any]] = []
+        self.next_visual_effect_id = 1
 
         self._x = 0.0
         self._y = 0.0
@@ -374,6 +381,7 @@ class HeliAttack2Env(gym.Env):
         self.last_truncated = False
         self.last_termination_reason = "none"
         self.last_reward_breakdown: dict[str, float] | None = None
+        self.sound_events: list[str] = []
         self.episode_step_count = 0
         self.last_contact = self._empty_contact()
         self.last_camera = (0.0, 0.0)
@@ -509,11 +517,26 @@ class HeliAttack2Env(gym.Env):
             "hud_reload_fill": load_img(Path("images") / "151.png"),
             "hud_reload_ready": load_img(Path("images") / "153.png"),
             "hud_weapon_icon": load_img(Path("sprites") / "DefineSprite_205" / "1.png"),
+            "heli_destroyed1": load_img(Path("sprites") / "DefineSprite_115_HeliDestroyed" / "1.png"),
+            "heli_destroyed2": load_img(Path("sprites") / "DefineSprite_115_HeliDestroyed" / "2.png"),
+            "guy_burned": load_img(Path("sprites") / "DefineSprite_76_guyBurned" / "1.png"),
             "heli1": compose_heli_frame(flipped=False),
             "heli2": compose_heli_frame(flipped=True),
             "bg": load_img(Path("images") / "410.jpg"),
             "bg1": load_img(Path("sprites") / "DefineSprite_25_bg" / "2.png"),
         }
+        for frame in range(1, VISUAL_EFFECT_BOOM_FRAMES + 1):
+            self.images[f"boom{frame}"] = load_img(
+                Path("sprites") / "DefineSprite_34_Boom" / f"{frame}.png"
+            )
+        for frame in range(1, VISUAL_EFFECT_SHARD_FRAMES + 1):
+            self.images[f"shard{frame}"] = load_img(
+                Path("sprites") / "DefineSprite_237_Shard" / f"{frame}.png"
+            )
+        for frame in range(1, VISUAL_EFFECT_BLOOD_FRAMES + 1):
+            self.images[f"blood{frame}"] = load_img(
+                Path("sprites") / "DefineSprite_30_Blood" / f"{frame}.png"
+            )
 
         tiles_dir = Path("sprites") / "DefineSprite_318_tiles"
         self.tiles = {
@@ -591,6 +614,8 @@ class HeliAttack2Env(gym.Env):
         self.total_bullets_spawned = 0
         self.enemies = []
         self.enemy_bullets = []
+        self.visual_effects = []
+        self.next_visual_effect_id = 1
         self.next_enemy_id = 1
         self.total_enemies_spawned = 0
         self.next_enemy_bullet_id = 1
@@ -627,6 +652,7 @@ class HeliAttack2Env(gym.Env):
         self.last_truncated = False
         self.last_termination_reason = "none"
         self.last_reward_breakdown = None
+        self.sound_events = []
         self.episode_step_count = 0
         self.last_contact = self._empty_contact()
         self.last_camera = self.get_camera()
@@ -1250,6 +1276,8 @@ class HeliAttack2Env(gym.Env):
                 self.last_player_damage_tick = self.tick + 1
                 self.last_player_damage_amount = damage
                 self.damage_event_frames.append(self.tick + 1)
+                self._spawn_player_blood_effects()
+                self.emit_sound_event("shurt")
                 if visible_at_resolution:
                     self.visible_enemy_bullet_ids_seen.add(bullet_id)
                     self.visible_enemy_bullet_ids_hit_player.add(bullet_id)
@@ -1333,6 +1361,176 @@ class HeliAttack2Env(gym.Env):
         active.append(replacement)
         event["spawned_enemy_ids"].append(int(replacement["id"]))
 
+    def _next_visual_effect_id(self) -> int:
+        effect_id = self.next_visual_effect_id
+        self.next_visual_effect_id += 1
+        return effect_id
+
+    def _visual_randint(self, upper: int, *salt: Any) -> int:
+        # Render-only debris sampling. This deliberately does not read
+        # self.np_random, which is reserved for gameplay-affecting randomness.
+        if upper <= 0:
+            return 0
+        payload = "|".join(str(part) for part in (self.tick, *salt)).encode("utf-8")
+        digest = hashlib.sha256(payload).digest()
+        return int.from_bytes(digest[:8], "big") % int(upper)
+
+    def _spawn_boom_effect(self, x: float, y: float) -> None:
+        self.visual_effects.append(
+            {
+                "id": self._next_visual_effect_id(),
+                "type": "boom",
+                "x": round(float(x), 8),
+                "y": round(float(y), 8),
+                "xspeed": 0.0,
+                "yspeed": 0.0,
+                "rotation": 0.0,
+                "frame": 1,
+                "scale": 2.0,
+                "stepc": 0.0,
+                "pause": 0,
+                "age": 0,
+            }
+        )
+
+    def _spawn_shard_effect(self, x: float, y: float, source_id: int, index: int) -> None:
+        effect_id = self._next_visual_effect_id()
+        self.visual_effects.append(
+            {
+                "id": effect_id,
+                "type": "shard",
+                "x": round(float(x), 8),
+                "y": round(float(y), 8),
+                "xspeed": round(float(-10 + self._visual_randint(20, source_id, index, effect_id, "xspeed")), 8),
+                "yspeed": round(float(-10 + self._visual_randint(20, source_id, index, effect_id, "yspeed")), 8),
+                "rotation": round(float(self._visual_randint(360, source_id, index, effect_id, "rotation")), 8),
+                "frame": self._visual_randint(
+                    VISUAL_EFFECT_SHARD_FRAMES,
+                    source_id,
+                    index,
+                    effect_id,
+                    "frame",
+                ) + 1,
+                "scale": 1.0,
+                "stepc": 0.0,
+                "bounces": 0,
+                "r": 0,
+                "age": 0,
+            }
+        )
+
+    def _spawn_guy_burned_effect(self, enemy: dict[str, Any]) -> None:
+        enemy_id = int(enemy.get("id", 0))
+        effect_id = self._next_visual_effect_id()
+        self.visual_effects.append(
+            {
+                "id": effect_id,
+                "type": "guy_burned",
+                "x": round(float(enemy["x"]), 8),
+                "y": round(float(enemy["y"]), 8),
+                "xspeed": round(float(-10 + self._visual_randint(20, enemy_id, effect_id, "xspeed")), 8),
+                "yspeed": round(float(-10 + self._visual_randint(15, enemy_id, effect_id, "yspeed")), 8),
+                "rotation": round(float(enemy.get("rotation", 0.0)), 8),
+                "frame": 1,
+                "scale": 1.0,
+                "stepc": 0.0,
+                "rot": 10,
+                "age": 0,
+            }
+        )
+
+    def _spawn_player_burned_effect(self) -> None:
+        effect_id = self._next_visual_effect_id()
+        player_center_x = self._x + self.width / 2.0
+        player_center_y = self._y + self.height / 2.0
+        self.visual_effects.append(
+            {
+                "id": effect_id,
+                "type": "player_burned",
+                "x": round(float(player_center_x), 8),
+                "y": round(float(player_center_y), 8),
+                "xspeed": round(float(-10 + self._visual_randint(20, "player_death", effect_id, "xspeed")), 8),
+                "yspeed": round(float(-self._visual_randint(10, "player_death", effect_id, "yspeed")), 8),
+                "rotation": 0.0,
+                "frame": 1,
+                "scale": 1.0,
+                "stepc": 0.0,
+                "rot": 10,
+                "age": 0,
+            }
+        )
+
+    def _spawn_heli_destroyed_effect(self, enemy: dict[str, Any]) -> None:
+        # AS assigns temp.yseed = this.yspeed, while heliFall reads this.yspeed.
+        # Preserve the typo as metadata and start yspeed at Flash's undefined/zero-like value.
+        self.visual_effects.append(
+            {
+                "id": self._next_visual_effect_id(),
+                "type": "heli_destroyed",
+                "x": round(float(enemy["x"]), 8),
+                "y": round(float(enemy["y"]), 8),
+                "xspeed": round(float(enemy.get("xspeed", 0.0)), 8),
+                "yspeed": 0.0,
+                "as_yseed": round(float(enemy.get("yspeed", 0.0)), 8),
+                "rotation": round(float(enemy.get("rotation", 0.0)), 8),
+                "frame": max(1, min(VISUAL_EFFECT_HELI_DESTROYED_FRAMES, int(enemy.get("frame", 1)))),
+                "scale": 1.0,
+                "stepc": 0.0,
+                "age": 0,
+            }
+        )
+
+    def _spawn_heli_destruction_effects(self, enemy: dict[str, Any]) -> None:
+        enemy_id = int(enemy.get("id", 0))
+        for index in range(3):
+            self._spawn_shard_effect(float(enemy["x"]), float(enemy["y"]), enemy_id, index)
+        self._spawn_guy_burned_effect(enemy)
+        self._spawn_heli_destroyed_effect(enemy)
+        self._spawn_boom_effect(float(enemy["x"]), float(enemy["y"]))
+        self.emit_sound_event("sheliboom")
+
+    def _spawn_player_blood_effects(self) -> None:
+        x = self._x + self.width / 2.0
+        y = self._y + self.height / 2.0
+        for index in range(3):
+            effect_id = self._next_visual_effect_id()
+            self.visual_effects.append(
+                {
+                    "id": effect_id,
+                    "type": "blood",
+                    "x": round(float(x), 8),
+                    "y": round(float(y), 8),
+                    "xspeed": 0.0,
+                    "yspeed": 0.0,
+                    "rotation": round(float(self._visual_randint(360, "player_blood", index, effect_id)), 8),
+                    "frame": 1,
+                    "scale": 1.0,
+                    "stepc": 0.0,
+                    "pause": index * 2,
+                    "age": 0,
+                }
+            )
+
+    def emit_sound_event(self, event_name: str) -> None:
+        self.sound_events.append(str(event_name))
+
+    def pop_sound_events(self) -> list[str]:
+        events = list(self.sound_events)
+        self.sound_events.clear()
+        return events
+
+    def clear_sound_events(self) -> None:
+        self.sound_events.clear()
+
+    def _spawn_player_death_effects(self) -> None:
+        if any(str(effect.get("type")) == "player_burned" for effect in self.visual_effects):
+            return
+        x = self._x + self.width / 2.0
+        y = self._y + self.height / 2.0
+        self._spawn_player_burned_effect()
+        self._spawn_boom_effect(x, y)
+        self.visual_effects[-1]["scale"] = 8.0
+
     def _update_enemies(self) -> dict[str, Any]:
         event = self._empty_enemy_event()
         metrics = self._world_metrics()
@@ -1343,6 +1541,7 @@ class HeliAttack2Env(gym.Env):
                 self.helis += 1
                 self.rthelis += 1
                 event["killed_enemy_ids"].append(int(enemy["id"]))
+                self._spawn_heli_destruction_effects(enemy)
                 if self.respawn_helis:
                     self._spawn_replacement_heli(active, event)
                 continue
@@ -1578,8 +1777,218 @@ class HeliAttack2Env(gym.Env):
                 event["spawn_blocked"] = True
                 self.player_shots_spawn_blocked += 1
             event["fired"] = True
+            self.emit_sound_event("sgun")
 
         return event
+
+    def _effect_tile_solid(self, x: float, y: float) -> bool:
+        tile_x = math.floor(float(x) / const.TILE_SIZE)
+        tile_y = math.floor(float(y) / const.TILE_SIZE)
+        if tile_x < 0 or tile_x >= self.map_width or tile_y < 0 or tile_y >= self.map_height:
+            return True
+        return self.map_data[tile_y][tile_x][0] != 0
+
+    def _effect_outside_active_region(self, x: float, y: float) -> bool:
+        tile_x = math.floor(float(x) / const.TILE_SIZE)
+        tile_y = math.floor(float(y) / const.TILE_SIZE)
+        return (
+            tile_x < self.worldpos[0] - 1
+            or tile_x > self.worldpos[0] + AS_STW + 1
+            or tile_y < self.worldpos[1] - 1
+            or tile_y > self.worldpos[1] + AS_STH + 1
+        )
+
+    def _update_boom_effect(self, effect: dict[str, Any]) -> dict[str, Any] | None:
+        effect["stepc"] = float(effect.get("stepc", 0.0)) + 1.0
+        if float(effect["stepc"]) > 1.0:
+            pause = int(effect.get("pause", 0))
+            effect["pause"] = pause - 1
+            if pause <= 0:
+                effect["frame"] = int(effect.get("frame", 1)) + 1
+                if int(effect["frame"]) >= VISUAL_EFFECT_BOOM_FRAMES:
+                    return None
+                effect["stepc"] = float(effect["stepc"]) - 1.0
+        return effect
+
+    def _update_blood_effect(self, effect: dict[str, Any]) -> dict[str, Any] | None:
+        effect["stepc"] = float(effect.get("stepc", 0.0)) + 1.0
+        if float(effect["stepc"]) > 1.0:
+            pause = int(effect.get("pause", 0))
+            effect["pause"] = pause - 1
+            if pause <= 0:
+                effect["frame"] = int(effect.get("frame", 1)) + 1
+                if int(effect["frame"]) >= VISUAL_EFFECT_BLOOD_FRAMES:
+                    return None
+                effect["stepc"] = float(effect["stepc"]) - 1.0
+        return effect
+
+    def _update_shard_effect(self, effect: dict[str, Any]) -> dict[str, Any] | None:
+        effect["stepc"] = float(effect.get("stepc", 0.0)) + 1.0
+        if float(effect["stepc"]) > 1.0:
+            effect["r"] = int(effect.get("r", 0)) + 1
+            effect["yspeed"] = float(effect.get("yspeed", 0.0)) + 1.0
+            effect["stepc"] = float(effect["stepc"]) - 1.0
+
+        effect["rotation"] = float(effect.get("rotation", 0.0)) + float(effect.get("xspeed", 0.0)) * 4.0
+        next_x = float(effect["x"]) + float(effect.get("xspeed", 0.0))
+        if self._effect_tile_solid(next_x, float(effect["y"])):
+            effect["xspeed"] = float(effect.get("xspeed", 0.0)) * -0.5
+        else:
+            effect["x"] = next_x
+
+        next_y = float(effect["y"]) + float(effect.get("yspeed", 0.0))
+        if self._effect_tile_solid(float(effect["x"]), next_y):
+            effect["yspeed"] = float(effect.get("yspeed", 0.0)) * -0.5
+            effect["bounces"] = int(effect.get("bounces", 0)) + 1
+        else:
+            effect["y"] = next_y
+
+        if (
+            int(effect.get("bounces", 0)) >= 3
+            or self._effect_outside_active_region(float(effect["x"]), float(effect["y"]))
+        ):
+            return None
+        return effect
+
+    def _update_guy_burned_effect(self, effect: dict[str, Any]) -> dict[str, Any] | None:
+        effect["stepc"] = float(effect.get("stepc", 0.0)) + 1.0
+        if float(effect["stepc"]) >= 1.0:
+            effect["yspeed"] = float(effect.get("yspeed", 0.0)) + 1.0
+            effect["stepc"] = float(effect["stepc"]) - 1.0
+        effect["rotation"] = float(effect.get("rotation", 0.0)) + abs(
+            float(effect.get("xspeed", 0.0)) + float(effect.get("yspeed", 0.0))
+        )
+
+        next_x = float(effect["x"]) + float(effect.get("xspeed", 0.0))
+        if self._effect_tile_solid(next_x, float(effect["y"])):
+            effect["xspeed"] = float(effect.get("xspeed", 0.0)) * -0.5
+        else:
+            effect["x"] = next_x
+
+        next_y = float(effect["y"]) + float(effect.get("yspeed", 0.0))
+        if self._effect_tile_solid(float(effect["x"]), next_y):
+            if float(effect.get("yspeed", 0.0)) < 4.0:
+                return None
+            effect["yspeed"] = float(effect.get("yspeed", 0.0)) * -0.2
+            effect["rot"] = 0
+        else:
+            effect["y"] = next_y
+
+        if self._effect_outside_active_region(float(effect["x"]), float(effect["y"])):
+            return None
+        return effect
+
+    def _update_player_burned_effect(self, effect: dict[str, Any]) -> dict[str, Any] | None:
+        if effect.get("settled"):
+            return effect
+        effect["stepc"] = float(effect.get("stepc", 0.0)) + 1.0
+        if float(effect["stepc"]) >= 1.0:
+            effect["yspeed"] = float(effect.get("yspeed", 0.0)) + 1.0
+            effect["stepc"] = float(effect["stepc"]) - 1.0
+        effect["rotation"] = float(effect.get("rotation", 0.0)) + abs(
+            float(effect.get("xspeed", 0.0)) + float(effect.get("yspeed", 0.0))
+        )
+
+        next_x = float(effect["x"]) + float(effect.get("xspeed", 0.0))
+        if self._effect_tile_solid(next_x, float(effect["y"])):
+            effect["xspeed"] = float(effect.get("xspeed", 0.0)) * -0.5
+        else:
+            effect["x"] = next_x
+
+        next_y = float(effect["y"]) + float(effect.get("yspeed", 0.0))
+        if self._effect_tile_solid(float(effect["x"]), next_y):
+            if float(effect.get("yspeed", 0.0)) < 4.0:
+                effect["settled"] = 1
+                effect["xspeed"] = 0.0
+                effect["yspeed"] = 0.0
+                return effect
+            effect["yspeed"] = float(effect.get("yspeed", 0.0)) * -0.5
+            effect["rot"] = 0
+        else:
+            effect["y"] = next_y
+
+        if self._effect_outside_active_region(float(effect["x"]), float(effect["y"])):
+            return None
+        return effect
+
+    def _update_heli_destroyed_effect(self, effect: dict[str, Any]) -> dict[str, Any] | None:
+        effect["stepc"] = float(effect.get("stepc", 0.0)) + 1.0
+        if float(effect["stepc"]) >= 1.0:
+            effect["yspeed"] = float(effect.get("yspeed", 0.0)) + 1.0
+            effect["stepc"] = float(effect["stepc"]) - 1.0
+        if float(effect.get("xspeed", 0.0)) > 0:
+            effect["rotation"] = float(effect.get("rotation", 0.0)) + float(effect.get("yspeed", 0.0)) / 4.0
+        else:
+            effect["rotation"] = float(effect.get("rotation", 0.0)) - float(effect.get("yspeed", 0.0)) / 4.0
+        effect["x"] = float(effect["x"]) + float(effect.get("xspeed", 0.0))
+        effect["y"] = float(effect["y"]) + float(effect.get("yspeed", 0.0))
+        if self._effect_tile_solid(float(effect["x"]), float(effect["y"])):
+            effect_id = int(effect.get("id", 0))
+            for index in range(3):
+                self._spawn_shard_effect(
+                    float(effect["x"]),
+                    float(effect["y"]) - const.TILE_SIZE / 2,
+                    effect_id,
+                    index,
+                )
+            self._spawn_boom_effect(float(effect["x"]), float(effect["y"]))
+            return None
+        if self._effect_outside_active_region(float(effect["x"]), float(effect["y"])):
+            return None
+        return effect
+
+    def _visual_effect_state(self, effect: dict[str, Any]) -> dict[str, Any]:
+        state: dict[str, Any] = {
+            "id": int(effect["id"]),
+            "type": str(effect["type"]),
+            "x": round(float(effect.get("x", 0.0)), 8),
+            "y": round(float(effect.get("y", 0.0)), 8),
+            "xspeed": round(float(effect.get("xspeed", 0.0)), 8),
+            "yspeed": round(float(effect.get("yspeed", 0.0)), 8),
+            "rotation": round(float(effect.get("rotation", 0.0)), 8),
+            "frame": int(effect.get("frame", 1)),
+            "scale": round(float(effect.get("scale", 1.0)), 8),
+            "stepc": round(float(effect.get("stepc", 0.0)), 8),
+            "age": int(effect.get("age", 0)),
+        }
+        for key in ("pause", "bounces", "r", "rot", "settled"):
+            if key in effect:
+                state[key] = int(effect[key])
+        if "as_yseed" in effect:
+            state["as_yseed"] = round(float(effect["as_yseed"]), 8)
+        return state
+
+    def _update_visual_effects(self) -> None:
+        active: list[dict[str, Any]] = []
+        pending = list(self.visual_effects)
+        self.visual_effects = active
+        for effect in pending:
+            effect = dict(effect)
+            effect["age"] = int(effect.get("age", 0)) + 1
+            if int(effect["age"]) > VISUAL_EFFECT_LIFETIME_FRAMES:
+                continue
+            effect_type = str(effect.get("type", ""))
+            if effect_type == "boom":
+                updated = self._update_boom_effect(effect)
+            elif effect_type == "blood":
+                updated = self._update_blood_effect(effect)
+            elif effect_type == "shard":
+                updated = self._update_shard_effect(effect)
+            elif effect_type == "guy_burned":
+                updated = self._update_guy_burned_effect(effect)
+            elif effect_type == "player_burned":
+                updated = self._update_player_burned_effect(effect)
+            elif effect_type == "heli_destroyed":
+                updated = self._update_heli_destroyed_effect(effect)
+            else:
+                updated = None
+            if updated is not None:
+                active.append(self._visual_effect_state(updated))
+
+    def advance_visual_effects_only(self, frames: int = 1) -> None:
+        """Advance render-only effects after a terminal frame without gameplay."""
+        for _ in range(max(0, int(frames))):
+            self._update_visual_effects()
 
     def _finish_step(
         self,
@@ -1605,6 +2014,7 @@ class HeliAttack2Env(gym.Env):
         terminated = player_dead or out_of_bounds_safety
         if player_dead:
             termination_reason = TERMINATION_PLAYER_DEATH
+            self._spawn_player_death_effects()
         elif out_of_bounds_safety:
             termination_reason = TERMINATION_OUT_OF_BOUNDS_SAFETY
 
@@ -1682,10 +2092,12 @@ class HeliAttack2Env(gym.Env):
         return self._get_obs(), reward, terminated, truncated, self.get_debug_info()
 
     def step(self, action):
+        self.clear_sound_events()
         action = self._normalize_action(action)
         move_action, jump_action, duck_action, boost_action, aim_bin, fire_action = action
         before_score = int(self.score)
         previous_x = self._x
+        self._update_visual_effects()
         
         contact = self._empty_contact()
         gun_event = self._empty_gun_event()
@@ -1782,6 +2194,7 @@ class HeliAttack2Env(gym.Env):
         ):
             if not self.boostK:
                 self.yspeed = -32
+                self.emit_sound_event("shjump")
                 if self.jump:
                     self.jump2 = 1
                 self.jump = 1
@@ -1954,6 +2367,12 @@ class HeliAttack2Env(gym.Env):
     def get_camera(self) -> tuple[float, float]:
         return float(self.world_x), float(self.world_y)
 
+    def _should_draw_live_player(self) -> bool:
+        return not (
+            bool(self.last_terminated)
+            and self.last_termination_reason == TERMINATION_PLAYER_DEATH
+        )
+
     def render(
         self,
         *,
@@ -2023,7 +2442,9 @@ class HeliAttack2Env(gym.Env):
         else:
             sprite = self.images.get("guy")
 
-        if sprite:
+        draw_live_player = self._should_draw_live_player()
+
+        if sprite and draw_live_player:
             sprite_x = self._x + cam_x + self.width / 2 - sprite.get_width() / 2
             sprite_y = self._y + cam_y + self.height - sprite.get_height()
             chute = self.images.get("chute")
@@ -2034,7 +2455,7 @@ class HeliAttack2Env(gym.Env):
                 chute_y = sprite_y - chute_scaled.get_height() + 8
                 canvas.blit(chute_scaled, (chute_x, chute_y))
             canvas.blit(sprite, (sprite_x, sprite_y))
-        else:
+        elif draw_live_player:
             rect_x = self._x + self.width / 2 - self.playerwidth / 2 + cam_x
             rect_y = self._y + self.height / 2 - self.playerheight / 2 + cam_y
             pygame.draw.rect(
@@ -2043,7 +2464,8 @@ class HeliAttack2Env(gym.Env):
                 pygame.Rect(rect_x, rect_y, self.playerwidth, self.playerheight),
             )
 
-        self._draw_machinegun(canvas, cam_x, cam_y)
+        if draw_live_player:
+            self._draw_machinegun(canvas, cam_x, cam_y)
 
         bullet_img = self.images.get("bullet")
         for bullet in self.bullets:
@@ -2067,6 +2489,7 @@ class HeliAttack2Env(gym.Env):
             else:
                 pygame.draw.circle(canvas, (255, 80, 0), (round(bullet_x), round(bullet_y)), 3)
 
+        self._draw_visual_effects(canvas, cam_x, cam_y)
         self._draw_gameplay_hud(canvas)
         self._draw_player_health_hud(canvas)
 
@@ -2293,6 +2716,43 @@ class HeliAttack2Env(gym.Env):
                     pygame.Rect(screen_x - 106, screen_y - 53, 212, 106),
                 )
             self._draw_heli_gun(canvas, enemy, cam_x, cam_y)
+
+    def _visual_effect_image(self, effect: dict[str, Any]) -> pygame.Surface | None:
+        effect_type = str(effect.get("type", ""))
+        frame = int(effect.get("frame", 1))
+        if effect_type == "boom":
+            return self.images.get(f"boom{frame}")
+        if effect_type == "blood":
+            return self.images.get(f"blood{frame}")
+        if effect_type == "shard":
+            return self.images.get(f"shard{frame}")
+        if effect_type == "guy_burned":
+            return self.images.get("guy_burned")
+        if effect_type == "player_burned":
+            return self.images.get("guy_burned")
+        if effect_type == "heli_destroyed":
+            return self.images.get(f"heli_destroyed{frame}")
+        return None
+
+    def _draw_visual_effects(self, canvas: pygame.Surface, cam_x: float, cam_y: float) -> None:
+        for effect in self.visual_effects:
+            image = self._visual_effect_image(effect)
+            if image is None:
+                continue
+            scale = float(effect.get("scale", 1.0))
+            source = image
+            if scale != 1.0:
+                width = max(1, round(image.get_width() * scale))
+                height = max(1, round(image.get_height() * scale))
+                source = pygame.transform.smoothscale(image, (width, height))
+            rotated = pygame.transform.rotate(source, -float(effect.get("rotation", 0.0)))
+            rect = rotated.get_rect(
+                center=(
+                    float(effect.get("x", 0.0)) + cam_x,
+                    float(effect.get("y", 0.0)) + cam_y,
+                )
+            )
+            canvas.blit(rotated, rect)
 
     def _draw_heli_gun(
         self,
@@ -2547,6 +3007,11 @@ class HeliAttack2Env(gym.Env):
                 "enemy_bullet_hits": int(self.enemy_bullet_hits),
             },
             "enemies": [self._enemy_state(enemy) for enemy in self.enemies],
+            # Render/replay-only state. These effects are updated during step()
+            # for deterministic visual playback, but gameplay hashes and RL
+            # semantics must remain insensitive to them.
+            "visual_effects": [self._visual_effect_state(effect) for effect in self.visual_effects],
+            "next_visual_effect_id": int(self.next_visual_effect_id),
         }
 
     def set_state(self, state: dict[str, Any]) -> None:
@@ -2622,6 +3087,16 @@ class HeliAttack2Env(gym.Env):
         )
         self.enemy_bullet_hits = int(combat.get("enemy_bullet_hits", 0))
         self.enemies = [dict(enemy) for enemy in state.get("enemies", [])]
+        self.visual_effects = [
+            self._visual_effect_state(dict(effect))
+            for effect in state.get("visual_effects", [])
+        ]
+        self.next_visual_effect_id = int(
+            state.get(
+                "next_visual_effect_id",
+                max((int(effect.get("id", 0)) for effect in self.visual_effects), default=0) + 1,
+            )
+        )
         self.last_camera = self.get_camera()
         self.last_gun_event = self._empty_gun_event()
         self.last_enemy_event = self._empty_enemy_event()
@@ -2678,7 +3153,12 @@ class HeliAttack2Env(gym.Env):
             self.current_consecutive_frames_at_right_edge = 0
 
     def state_hash(self) -> str:
-        payload = json.dumps(self.get_state(), sort_keys=True, separators=(",", ":"))
+        state = dict(self.get_state())
+        # Keep replay parity and headless gameplay checks scoped to gameplay
+        # state. Visual effects are serialized separately for rendering only.
+        state.pop("visual_effects", None)
+        state.pop("next_visual_effect_id", None)
+        payload = json.dumps(state, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
     def _defensive_diagnostics_info(self) -> dict[str, Any]:
@@ -2775,6 +3255,7 @@ class HeliAttack2Env(gym.Env):
             "gun": dict(self.get_state()["gun"]),
             "combat": dict(self.get_state()["combat"]),
             "enemies": [dict(enemy) for enemy in self.get_state()["enemies"]],
+            "visual_effects": [dict(effect) for effect in self.get_state()["visual_effects"]],
             "enemy_bullets": [
                 dict(bullet) for bullet in self.get_state()["enemy_bullets"]
             ],

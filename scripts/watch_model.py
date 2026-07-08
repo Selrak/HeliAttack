@@ -16,6 +16,14 @@ from scripts.runtime_config import (
     resolve_runtime_config,
     runtime_env_kwargs,
 )
+from ha2_gui import (
+    GuiSound,
+    GuiState,
+    add_common_gui_args,
+    advance_post_death_visuals,
+    handle_common_event,
+    terminal_reason,
+)
 
 
 def default_model_path() -> Path:
@@ -42,10 +50,10 @@ def main(args_list: list[str] | None = None) -> None:
     parser.add_argument("--model-choice", choices=["best", "latest", "path"], default="best")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--fps", type=int, default=30)
-    parser.add_argument("--fast-fps-multiplier", type=int, default=4)
     parser.add_argument("--stochastic", action="store_true")
     parser.add_argument("--save-replay", nargs="?", const=DEFAULT_OUTPUT, default=None, type=str)
     parser.add_argument("--record-gif", nargs="?", const=DEFAULT_OUTPUT, default=None, type=str)
+    add_common_gui_args(parser)
     add_runtime_config_args(parser)
     args = parser.parse_args(args_list)
 
@@ -83,6 +91,9 @@ def main(args_list: list[str] | None = None) -> None:
     )
     base_env = env.unwrapped
     obs, _info = env.reset(seed=args.seed)
+    gui_state = GuiState()
+    gui_sound = GuiSound(enabled=not args.no_sound, sound_debug=args.sound_debug)
+    gui_sound.sync(base_env)
     writer = None
     replay_path = None
     if args.save_replay is not None:
@@ -112,76 +123,87 @@ def main(args_list: list[str] | None = None) -> None:
                 raise FileExistsError(f"Refusing to overwrite existing GIF: {gif_path}")
     clock = pygame.time.Clock()
     frames = []
-    fast_forward = False
-    running = True
     episode_max_score = int(base_env.score)
     session_max_score = int(base_env.score)
 
     base_env.render(
-        debug_overlay=True,
-        debug_collision=False,
+        debug_overlay=gui_state.debug_overlay,
+        debug_collision=gui_state.collision_overlay,
         debug_lines=[
             f"model={model_path.name}",
             f"pressure={runtime_config.pressure_profile}",
             "initializing",
-            "Esc quit",
+            *gui_state.common_debug_lines(),
         ],
     )
 
     try:
-        while running:
+        while gui_state.running:
             for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    running = False
-                elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                    running = False
-                elif event.type == pygame.KEYDOWN and event.key == pygame.K_f:
-                    fast_forward = not fast_forward
+                command = handle_common_event(gui_state, event, pygame)
+                if command.restart and gui_state.terminal_hold:
+                    gui_sound.stop_all()
+                    obs, _info = env.reset(seed=args.seed)
+                    gui_state.clear_terminal()
+                    episode_max_score = int(base_env.score)
+                    gui_sound.sync(base_env)
+            if not gui_state.running:
+                break
 
-            action, _state = model.predict(obs, deterministic=not args.stochastic)
-            action_list = [int(v) for v in action]
-            obs, reward, terminated, truncated, info = env.step(action_list)
-            episode_max_score = max(episode_max_score, int(base_env.score))
-            session_max_score = max(session_max_score, episode_max_score)
-            if writer is not None:
-                policy_action = get_policy_action(env, action_list)
-                full_action = get_full_action(env, action_list)
-                writer.append_step(
-                    env,
-                    full_action,
-                    obs,
-                    reward,
-                    terminated,
-                    truncated,
-                    info,
-                    policy_action=policy_action,
-                    full_action=full_action,
-                    control_mode=runtime_config.control_mode,
-                )
+            if gui_state.terminal_hold:
+                if (not gui_state.paused or gui_state.single_step) and gui_state.is_player_death_hold:
+                    advance_post_death_visuals(base_env, gui_state, force_one=gui_state.single_step)
+                gui_state.consume_single_step()
+            elif gui_state.should_advance_logic():
+                action, _state = model.predict(obs, deterministic=not args.stochastic)
+                action_list = [int(v) for v in action]
+                obs, reward, terminated, truncated, info = env.step(action_list)
+                gui_sound.sync(base_env, play_events=True)
+                episode_max_score = max(episode_max_score, int(base_env.score))
+                session_max_score = max(session_max_score, episode_max_score)
+                if writer is not None:
+                    policy_action = get_policy_action(env, action_list)
+                    full_action = get_full_action(env, action_list)
+                    writer.append_step(
+                        env,
+                        full_action,
+                        obs,
+                        reward,
+                        terminated,
+                        truncated,
+                        info,
+                        policy_action=policy_action,
+                        full_action=full_action,
+                        control_mode=runtime_config.control_mode,
+                    )
+                reason = terminal_reason(terminated, truncated, info)
+                if reason is not None:
+                    update_high_score(episode_max_score)
+                    gui_state.enter_terminal(reason)
+                    gui_sound.sync(base_env)
+                gui_state.consume_single_step()
+            gui_sound.sync(base_env)
             base_env.render(
-                debug_overlay=True,
-                debug_collision=False,
+                debug_overlay=gui_state.debug_overlay,
+                debug_collision=gui_state.collision_overlay,
                 debug_lines=[
                     f"model={model_path.name}",
                     f"pressure={runtime_config.pressure_profile}",
-                    f"fast={fast_forward}",
-                    "controls: F fast-forward Esc quit",
+                    f"fps={clock.get_fps():.1f} target={gui_state.target_fps(args.fps)}",
+                    *gui_state.common_debug_lines(),
+                    *gui_sound.debug_lines(),
                 ],
             )
 
-            if gif_path is not None and env.window is not None:
+            if gif_path is not None and base_env.window is not None:
                 import numpy as np
 
-                frame3d = pygame.surfarray.array3d(env.window)
+                frame3d = pygame.surfarray.array3d(base_env.window)
                 frames.append(np.transpose(frame3d, (1, 0, 2)))
 
-            if terminated or truncated:
-                update_high_score(episode_max_score)
-                obs, _info = env.reset(seed=args.seed)
-                episode_max_score = int(base_env.score)
-            target_fps = args.fps * args.fast_fps_multiplier if fast_forward else args.fps
-            clock.tick(target_fps)
+            clock.tick(gui_state.target_fps(args.fps))
     finally:
+        gui_sound.stop_all()
         update_high_score(session_max_score)
         if writer is not None:
             writer.close()

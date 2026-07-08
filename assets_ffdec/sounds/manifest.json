@@ -1,0 +1,106 @@
+{
+  "sboom": {
+    "attach_sound_name": "sboom",
+    "asset": "assets_ffdec/sounds/sboom.mp3",
+    "source_export": "reference_exports/ffdec_ha2/sounds/365_sboom.mp3",
+    "volume": 100,
+    "used_by": ["generic explosion"],
+    "status": "deferred"
+  },
+  "ssmallboom": {
+    "attach_sound_name": "sboom",
+    "asset": "assets_ffdec/sounds/sboom.mp3",
+    "source_export": "reference_exports/ffdec_ha2/sounds/365_sboom.mp3",
+    "volume": 50,
+    "used_by": ["small explosion alias"],
+    "status": "deferred"
+  },
+  "sgun": {
+    "attach_sound_name": "sgun",
+    "asset": "assets_ffdec/sounds/sgun.mp3",
+    "source_export": "reference_exports/ffdec_ha2/sounds/370_sgun.mp3",
+    "volume": 100,
+    "used_by": ["MachineGun"],
+    "status": "implemented"
+  },
+  "sheliboom": {
+    "attach_sound_name": "sheliboom",
+    "asset": "assets_ffdec/sounds/sheliboom.mp3",
+    "source_export": "reference_exports/ffdec_ha2/sounds/380_sheliboom.mp3",
+    "volume": 100,
+    "used_by": ["Heli destruction"],
+    "status": "implemented"
+  },
+  "shurt": {
+    "attach_sound_name": "shurt",
+    "asset": "assets_ffdec/sounds/shurt.mp3",
+    "source_export": "reference_exports/ffdec_ha2/sounds/369_shurt.mp3",
+    "volume": 100,
+    "used_by": ["player damage"],
+    "status": "implemented"
+  },
+  "shjump": {
+    "attach_sound_name": "shjump",
+    "asset": "assets_ffdec/sounds/shjump.mp3",
+    "source_export": "reference_exports/ffdec_ha2/sounds/382_shjump.mp3",
+    "volume": 100,
+    "used_by": ["HyperJump"],
+    "status": "implemented"
+  },
+  "sheli": {
+    "attach_sound_name": "sheli",
+    "asset": "assets_ffdec/sounds/sheli.mp3",
+    "source_export": "reference_exports/ffdec_ha2/sounds/379_sheli.mp3",
+    "volume": 0,
+    "used_by": ["enemy Heli loop"],
+    "status": "implemented"
+  },
+  "smusic": {
+    "attach_sound_name": "smusic",
+    "asset": "assets_ffdec/sounds/smusic.mp3",
+    "source_export": "reference_exports/ffdec_ha2/sounds/381_smusic.mp3",
+    "volume": 50,
+    "used_by": ["music loop"],
+    "status": "implemented"
+  },
+  "sbigboom": {
+    "attach_sound_name": "sbigboom",
+    "asset": "assets_ffdec/sounds/sbigboom.mp3",
+    "source_export": "reference_exports/ffdec_ha2/sounds/378_sbigboom.mp3",
+    "volume": 100,
+    "used_by": ["large explosion", "player death boom"],
+    "status": "deferred"
+  },
+  "smetal0": {
+    "attach_sound_name": "smetal0",
+    "asset": "assets_ffdec/sounds/smetal0.mp3",
+    "source_export": "reference_exports/ffdec_ha2/sounds/374_smetal0.mp3",
+    "volume": 100,
+    "used_by": ["metal impact"],
+    "status": "deferred"
+  },
+  "smetal1": {
+    "attach_sound_name": "smetal1",
+    "asset": "assets_ffdec/sounds/smetal1.mp3",
+    "source_export": "reference_exports/ffdec_ha2/sounds/375_smetal1.mp3",
+    "volume": 100,
+    "used_by": ["metal impact"],
+    "status": "deferred"
+  },
+  "smetal2": {
+    "attach_sound_name": "smetal2",
+    "asset": "assets_ffdec/sounds/smetal2.mp3",
+    "source_export": "reference_exports/ffdec_ha2/sounds/376_smetal2.mp3",
+    "volume": 100,
+    "used_by": ["metal impact"],
+    "status": "deferred"
+  },
+  "smetal3": {
+    "attach_sound_name": "smetal3",
+    "asset": "assets_ffdec/sounds/smetal3.mp3",
+    "source_export": "reference_exports/ffdec_ha2/sounds/377_smetal3.mp3",
+    "volume": 100,
+    "used_by": ["metal impact"],
+    "status": "deferred"
+  }
+}

@@ -61,3 +61,8 @@ This is an append-only decision log. Future ChatGPT/Codex decisions should be ad
 - Decision: Make `experiments/<run>/` the default unit for training, evaluation, replay, report, checkpoint, and TensorBoard outputs.
 - Rationale: Root-level `models/`, `reports/`, and `replays/` outputs were easy to overwrite or mix across runs; self-contained experiment folders make runs reproducible and easier to inspect.
 - Consequences: `train_parkour` now creates a new experiment directory by default, `evaluate_model` and `watch_model` prefer experiment-scoped paths, and repeat evaluation on an existing report/replay file fails clearly rather than clobbering it. Root-level compatibility remains only for ad hoc/manual use.
+
+## 2026-06-12 - Shared GUI Viewer Boundary
+- Decision: Centralize common GUI/viewer behavior in `ha2_gui.py` for manual play, model watch, and replay playback.
+- Rationale: `play_human`, `watch_model`, and `play_replay` had diverging key maps, speed controls, terminal behavior, and sound handling. A shared GUI-only helper keeps those policies consistent while leaving mode-specific action sources in the scripts.
+- Consequences: GUI speed factors, pause/single-step controls, terminal restart/quit policy, player-death visual slow-motion, and GUI sound setup/update/shutdown are shared. `ha2_env.py` still owns gameplay state and transient one-shot event emission only; audio mixer objects, loop channels, GUI timing state, and gameover slowdown state stay outside the environment and outside replay/state hashes.
